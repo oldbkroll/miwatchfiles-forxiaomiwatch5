@@ -8,6 +8,7 @@ import com.example.watchfiles.data.DirectPathRepository
 import com.example.watchfiles.data.FileEntry
 import com.example.watchfiles.fileops.FileMutationGateway
 import com.example.watchfiles.fileops.FileMutationRepository
+import com.example.watchfiles.fileops.FileMutationResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +24,18 @@ data class BrowserUiState(
     val showHidden: Boolean = false,
     val errorMessage: String? = null,
     val selection: BrowserSelection = BrowserSelection(),
+    val mutation: BrowserMutationState = BrowserMutationState.Idle,
 )
+
+sealed interface BrowserMutationState {
+    data object Idle : BrowserMutationState
+    data object Working : BrowserMutationState
+    data class Succeeded(val path: Path) : BrowserMutationState
+    data class Failed(
+        val userMessage: String,
+        val technicalMessage: String?,
+    ) : BrowserMutationState
+}
 
 class FileBrowserViewModel(
     private val repository: DirectoryReader = DirectPathRepository(),
@@ -44,6 +56,7 @@ class FileBrowserViewModel(
                 isLoading = true,
                 errorMessage = null,
                 selection = BrowserSelection(),
+                mutation = BrowserMutationState.Idle,
             )
         }
         loadJob = viewModelScope.launch {
@@ -97,6 +110,55 @@ class FileBrowserViewModel(
 
     fun clearSelection() {
         _state.update { it.copy(selection = it.selection.clear()) }
+    }
+
+    fun createDirectory(name: String) = runMutation {
+        mutationRepository.createDirectory(_state.value.currentPath, name)
+    }
+
+    fun rename(source: Path, newName: String) = runMutation {
+        mutationRepository.rename(source, newName)
+    }
+
+    fun consumeMutationResult() {
+        _state.update { it.copy(mutation = BrowserMutationState.Idle) }
+    }
+
+    private fun runMutation(operation: suspend () -> FileMutationResult) {
+        if (_state.value.mutation == BrowserMutationState.Working) return
+        _state.update { it.copy(mutation = BrowserMutationState.Working) }
+        viewModelScope.launch {
+            when (val result = operation()) {
+                is FileMutationResult.Success -> {
+                    val currentPath = _state.value.currentPath
+                    val refreshed = runCatching { repository.list(currentPath) }
+                    _state.update {
+                        it.copy(
+                            entries = refreshed.getOrDefault(it.entries),
+                            selection = BrowserSelection(),
+                            mutation = BrowserMutationState.Succeeded(result.path),
+                            errorMessage = refreshed.exceptionOrNull()?.message,
+                        )
+                    }
+                }
+
+                is FileMutationResult.Failure -> {
+                    result.technicalMessage?.let { technical ->
+                        runCatching {
+                            android.util.Log.w("WatchFiles", result.userMessage + ": " + technical)
+                        }
+                    }
+                    _state.update {
+                        it.copy(
+                            mutation = BrowserMutationState.Failed(
+                                result.userMessage,
+                                result.technicalMessage,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun refresh() = open(_state.value.currentPath)

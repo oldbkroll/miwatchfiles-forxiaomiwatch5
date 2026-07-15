@@ -19,10 +19,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -55,15 +60,19 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
@@ -81,12 +90,15 @@ import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.Text
 import androidx.core.content.FileProvider
 import com.example.watchfiles.browser.BrowserUiState
+import com.example.watchfiles.browser.BrowserMutationState
 import com.example.watchfiles.browser.FileBrowserViewModel
 import com.example.watchfiles.data.FileEntry
 import com.example.watchfiles.data.FileTypeInfo
 import com.example.watchfiles.data.identifyFileType
 import com.example.watchfiles.device.formatBytes
 import com.example.watchfiles.device.readDeviceSnapshot
+import com.example.watchfiles.fileops.FileNameRules
+import com.example.watchfiles.fileops.FileNameValidation
 import com.example.watchfiles.image.DecodedImage
 import com.example.watchfiles.image.decodeLowMemoryImage
 import kotlinx.coroutines.CancellationException
@@ -96,7 +108,19 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class AppScreen { HOME, BROWSER, FILE_DETAILS, IMAGE_VIEWER, DEVICE_INFO }
+private enum class AppScreen {
+    HOME,
+    BROWSER,
+    FILE_DETAILS,
+    IMAGE_VIEWER,
+    DEVICE_INFO,
+    NAME_EDITOR,
+}
+
+private sealed interface NameEditorRequest {
+    data object CreateDirectory : NameEditorRequest
+    data class Rename(val entry: FileEntry) : NameEditorRequest
+}
 
 private const val MAX_IMAGE_ZOOM = 4f
 
@@ -236,6 +260,7 @@ private fun WatchFilesApp(
 
     var screen by remember { mutableStateOf(AppScreen.HOME) }
     var selectedFile by remember { mutableStateOf<FileEntry?>(null) }
+    var nameEditorRequest by remember { mutableStateOf<NameEditorRequest?>(null) }
     val browserState by browserViewModel.state.collectAsState()
     val browserListState = rememberScalingLazyListState()
     val scope = rememberCoroutineScope()
@@ -258,6 +283,14 @@ private fun WatchFilesApp(
         }
     }
 
+    LaunchedEffect(browserState.mutation) {
+        if (browserState.mutation is BrowserMutationState.Succeeded) {
+            nameEditorRequest = null
+            screen = AppScreen.BROWSER
+            browserViewModel.consumeMutationResult()
+        }
+    }
+
     BackHandler(enabled = screen != AppScreen.HOME) {
         when (screen) {
             AppScreen.BROWSER -> {
@@ -270,6 +303,13 @@ private fun WatchFilesApp(
             AppScreen.FILE_DETAILS -> screen = AppScreen.BROWSER
             AppScreen.IMAGE_VIEWER -> screen = AppScreen.FILE_DETAILS
             AppScreen.DEVICE_INFO -> screen = AppScreen.HOME
+            AppScreen.NAME_EDITOR -> {
+                if (browserState.mutation != BrowserMutationState.Working) {
+                    browserViewModel.consumeMutationResult()
+                    nameEditorRequest = null
+                    screen = AppScreen.BROWSER
+                }
+            }
             AppScreen.HOME -> Unit
         }
     }
@@ -300,6 +340,20 @@ private fun WatchFilesApp(
             onToggleSelection = browserViewModel::toggleSelection,
             onSelectAll = browserViewModel::selectAll,
             onClearSelection = browserViewModel::clearSelection,
+            onCreateDirectory = {
+                browserViewModel.consumeMutationResult()
+                nameEditorRequest = NameEditorRequest.CreateDirectory
+                screen = AppScreen.NAME_EDITOR
+            },
+            onRenameSelected = {
+                val selectedPath = browserState.selection.selectedPaths.singleOrNull()
+                val selectedEntry = browserState.entries.firstOrNull { it.path == selectedPath }
+                if (selectedEntry != null) {
+                    browserViewModel.consumeMutationResult()
+                    nameEditorRequest = NameEditorRequest.Rename(selectedEntry)
+                    screen = AppScreen.NAME_EDITOR
+                }
+            },
         )
         AppScreen.FILE_DETAILS -> selectedFile?.let { entry ->
             FileDetailsScreen(
@@ -325,6 +379,33 @@ private fun WatchFilesApp(
             onOpenDeviceInfo = { screen = AppScreen.DEVICE_INFO },
         )
         AppScreen.DEVICE_INFO -> DeviceInfoScreen()
+        AppScreen.NAME_EDITOR -> {
+            val request = nameEditorRequest
+            if (request == null) {
+                LaunchedEffect(Unit) { screen = AppScreen.BROWSER }
+            } else {
+                FileNameEditorScreen(
+                    request = request,
+                    mutation = browserState.mutation,
+                    onSubmit = { name ->
+                        when (request) {
+                            NameEditorRequest.CreateDirectory -> {
+                                browserViewModel.createDirectory(name)
+                            }
+
+                            is NameEditorRequest.Rename -> {
+                                browserViewModel.rename(request.entry.path, name)
+                            }
+                        }
+                    },
+                    onCancel = {
+                        browserViewModel.consumeMutationResult()
+                        nameEditorRequest = null
+                        screen = AppScreen.BROWSER
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -406,6 +487,8 @@ private fun BrowserScreen(
     onToggleSelection: (Path) -> Unit,
     onSelectAll: (List<FileEntry>) -> Unit,
     onClearSelection: () -> Unit,
+    onCreateDirectory: () -> Unit,
+    onRenameSelected: () -> Unit,
 ) {
     val visibleEntries = remember(state.entries, state.showHidden) {
         if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
@@ -432,6 +515,15 @@ private fun BrowserScreen(
                     onClick = { onSelectAll(visibleEntries) },
                 )
             }
+            if (state.selection.selectedPaths.size == 1) {
+                item {
+                    AppChip(
+                        label = "重命名",
+                        secondary = "修改所选项目名称",
+                        onClick = onRenameSelected,
+                    )
+                }
+            }
         } else {
             item {
                 ListHeader {
@@ -447,6 +539,13 @@ private fun BrowserScreen(
                     label = "返回上级",
                     secondary = state.currentPath.toString(),
                     onClick = onNavigateUp,
+                )
+            }
+            item {
+                AppChip(
+                    label = "新建文件夹",
+                    secondary = "在当前目录创建",
+                    onClick = onCreateDirectory,
                 )
             }
             item {
@@ -539,6 +638,82 @@ private fun FileChip(
             overflow = TextOverflow.Ellipsis,
             fontSize = 10.sp,
             color = Color.LightGray,
+        )
+    }
+}
+
+@Composable
+private fun FileNameEditorScreen(
+    request: NameEditorRequest,
+    mutation: BrowserMutationState,
+    onSubmit: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val initialName = (request as? NameEditorRequest.Rename)?.entry?.name.orEmpty()
+    var value by remember(request) { mutableStateOf(initialName) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val validation = remember(value) { FileNameRules.validate(value) }
+    val working = mutation == BrowserMutationState.Working
+
+    LaunchedEffect(request) {
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 36.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = if (request is NameEditorRequest.CreateDirectory) "新建文件夹" else "重命名",
+            fontSize = 18.sp,
+        )
+        BasicTextField(
+            value = value,
+            onValueChange = { if (!working) value = it.replace("\n", "") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 18.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+                .padding(12.dp)
+                .focusRequester(focusRequester)
+                .semantics { contentDescription = "名称输入" },
+            singleLine = true,
+            textStyle = TextStyle(color = Color.Black, fontSize = 16.sp),
+            cursorBrush = SolidColor(Color.Blue),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    if (!working && validation == FileNameValidation.Valid) onSubmit(value)
+                },
+            ),
+        )
+        val message = when {
+            validation is FileNameValidation.Invalid -> validation.message
+            mutation is BrowserMutationState.Failed -> mutation.userMessage
+            else -> " "
+        }
+        Text(
+            text = message,
+            color = if (message.isBlank()) Color.Transparent else Color(0xFFFF8A80),
+            fontSize = 11.sp,
+        )
+        AppChip(
+            label = if (working) "正在处理…" else "确认",
+            secondary = "不会覆盖同名项目",
+            enabled = !working && validation == FileNameValidation.Valid,
+            onClick = { onSubmit(value) },
+        )
+        AppChip(
+            label = "取消",
+            secondary = "不做修改",
+            enabled = !working,
+            onClick = onCancel,
         )
     }
 }
