@@ -1,0 +1,836 @@
+package com.example.watchfiles
+
+import android.app.ActivityManager
+import android.Manifest
+import android.content.ClipData
+import android.content.ActivityNotFoundException
+import android.content.ComponentCallbacks2
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
+import android.os.Environment
+import android.os.SystemClock
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.ScalingLazyListState
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.ChipDefaults
+import androidx.wear.compose.material.ListHeader
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.Text
+import androidx.core.content.FileProvider
+import com.example.watchfiles.browser.BrowserUiState
+import com.example.watchfiles.browser.FileBrowserViewModel
+import com.example.watchfiles.data.FileEntry
+import com.example.watchfiles.data.FileTypeInfo
+import com.example.watchfiles.data.identifyFileType
+import com.example.watchfiles.device.formatBytes
+import com.example.watchfiles.device.readDeviceSnapshot
+import com.example.watchfiles.image.DecodedImage
+import com.example.watchfiles.image.decodeLowMemoryImage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import java.nio.file.Path
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
+
+private enum class AppScreen { HOME, BROWSER, FILE_DETAILS, IMAGE_VIEWER, DEVICE_INFO }
+
+private const val MAX_IMAGE_ZOOM = 4f
+
+private val TopArcButtonShape = GenericShape { size, _ ->
+    val ellipseControl = 0.5522848f
+    moveTo(0f, size.height)
+    cubicTo(
+        0f,
+        size.height * (1f - ellipseControl),
+        size.width * 0.5f * (1f - ellipseControl),
+        0f,
+        size.width * 0.5f,
+        0f,
+    )
+    cubicTo(
+        size.width * 0.5f * (1f + ellipseControl),
+        0f,
+        size.width,
+        size.height * (1f - ellipseControl),
+        size.width,
+        size.height,
+    )
+    lineTo(0f, size.height)
+    close()
+}
+
+class MainActivity : ComponentActivity() {
+    private val browserViewModel by viewModels<FileBrowserViewModel>()
+    private var hasStorageAccess by mutableStateOf(false)
+    private val storagePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        updatePermissionState()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        updatePermissionState()
+        setContent {
+            WatchFilesTheme {
+                WatchFilesApp(
+                    hasStorageAccess = hasStorageAccess,
+                    onRequestPermission = ::requestLegacyStoragePermission,
+                    onOpenAppSettings = ::openAppSettings,
+                    onOpenFile = ::openFile,
+                    browserViewModel = browserViewModel,
+                )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePermissionState()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            // Thumbnail and media caches will be trimmed here in later milestones.
+        }
+    }
+
+    private fun updatePermissionState() {
+        val allFiles = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Environment.isExternalStorageManager()
+        } else {
+            false
+        }
+        val legacyRead = checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+        hasStorageAccess = allFiles || legacyRead
+    }
+
+    private fun requestLegacyStoragePermission() {
+        storagePermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ),
+        )
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName"),
+        )
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            // This vendor firmware may omit individual settings pages.
+        }
+    }
+
+    private fun openFile(path: Path, mimeType: String): String? {
+        return try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                path.toFile(),
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                clipData = ClipData.newRawUri(path.fileName?.toString() ?: "file", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+            null
+        } catch (_: ActivityNotFoundException) {
+            "未找到能打开此类文件的应用"
+        } catch (_: IllegalArgumentException) {
+            "此文件不在可共享的存储位置"
+        } catch (_: SecurityException) {
+            "系统拒绝读取此文件"
+        }
+    }
+}
+
+@Composable
+private fun WatchFilesTheme(content: @Composable () -> Unit) {
+    MaterialTheme(content = content)
+}
+
+@Composable
+private fun WatchFilesApp(
+    hasStorageAccess: Boolean,
+    onRequestPermission: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenFile: (Path, String) -> String?,
+    browserViewModel: FileBrowserViewModel,
+) {
+    if (!hasStorageAccess) {
+        PermissionScreen(onRequestPermission, onOpenAppSettings)
+        return
+    }
+
+    var screen by remember { mutableStateOf(AppScreen.HOME) }
+    var selectedFile by remember { mutableStateOf<FileEntry?>(null) }
+    val browserState by browserViewModel.state.collectAsState()
+    val browserListState = rememberScalingLazyListState()
+    val scope = rememberCoroutineScope()
+    val storageRoot = remember { Environment.getExternalStorageDirectory().toPath() }
+
+    val resetBrowserPosition = {
+        scope.launch { browserListState.scrollToItem(0) }
+    }
+    val openBrowserDirectory: (Path) -> Unit = { path ->
+        resetBrowserPosition()
+        browserViewModel.open(path)
+        screen = AppScreen.BROWSER
+    }
+    val navigateBrowserUp = {
+        if (browserState.currentPath == storageRoot) {
+            screen = AppScreen.HOME
+        } else {
+            resetBrowserPosition()
+            if (!browserViewModel.navigateUp()) screen = AppScreen.HOME
+        }
+    }
+
+    BackHandler(enabled = screen != AppScreen.HOME) {
+        when (screen) {
+            AppScreen.BROWSER -> navigateBrowserUp()
+            AppScreen.FILE_DETAILS -> screen = AppScreen.BROWSER
+            AppScreen.IMAGE_VIEWER -> screen = AppScreen.FILE_DETAILS
+            AppScreen.DEVICE_INFO -> screen = AppScreen.HOME
+            AppScreen.HOME -> Unit
+        }
+    }
+
+    when (screen) {
+        AppScreen.HOME -> HomeScreen(
+            onOpenDirectory = openBrowserDirectory,
+            onOpenDeviceInfo = { screen = AppScreen.DEVICE_INFO },
+        )
+        AppScreen.BROWSER -> BrowserScreen(
+            state = browserState,
+            listState = browserListState,
+            onOpenDirectory = { path ->
+                resetBrowserPosition()
+                browserViewModel.open(path)
+            },
+            onOpenFile = { entry ->
+                selectedFile = entry
+                screen = AppScreen.FILE_DETAILS
+            },
+            onNavigateUp = navigateBrowserUp,
+            onToggleHidden = browserViewModel::toggleHidden,
+            onRefresh = browserViewModel::refresh,
+        )
+        AppScreen.FILE_DETAILS -> selectedFile?.let { entry ->
+            FileDetailsScreen(
+                entry = entry,
+                onOpenFile = onOpenFile,
+                onPreviewImage = {
+                    selectedFile = it
+                    screen = AppScreen.IMAGE_VIEWER
+                },
+                onNavigateBack = { screen = AppScreen.BROWSER },
+            )
+        } ?: HomeScreen(
+            onOpenDirectory = openBrowserDirectory,
+            onOpenDeviceInfo = { screen = AppScreen.DEVICE_INFO },
+        )
+        AppScreen.IMAGE_VIEWER -> selectedFile?.let { entry ->
+            ImageViewerScreen(
+                entry = entry,
+                onNavigateBack = { screen = AppScreen.FILE_DETAILS },
+            )
+        } ?: HomeScreen(
+            onOpenDirectory = openBrowserDirectory,
+            onOpenDeviceInfo = { screen = AppScreen.DEVICE_INFO },
+        )
+        AppScreen.DEVICE_INFO -> DeviceInfoScreen()
+    }
+}
+
+@Composable
+private fun PermissionScreen(
+    onRequestPermission: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+) {
+    RoundList {
+        item { ListHeader { Text("需要文件权限") } }
+        item {
+            Text(
+                text = "此手表使用“照片、媒体内容和文件”权限管理内部存储。",
+                fontSize = 12.sp,
+            )
+        }
+        item {
+            AppChip(
+                label = "授予文件权限",
+                secondary = "弹出系统权限确认",
+                onClick = onRequestPermission,
+            )
+        }
+        item {
+            AppChip(
+                label = "打开应用信息",
+                secondary = "权限未弹出时使用",
+                onClick = onOpenAppSettings,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    onOpenDirectory: (Path) -> Unit,
+    onOpenDeviceInfo: () -> Unit,
+) {
+    val root = remember { Environment.getExternalStorageDirectory().toPath() }
+    val shortcuts = remember {
+        listOf(
+            "内部存储" to root,
+            "下载" to root.resolve(Environment.DIRECTORY_DOWNLOADS),
+            "图片" to root.resolve(Environment.DIRECTORY_PICTURES),
+            "音乐" to root.resolve(Environment.DIRECTORY_MUSIC),
+            "视频" to root.resolve(Environment.DIRECTORY_MOVIES),
+        )
+    }
+
+    RoundList {
+        item { ListHeader { Text("WatchFiles") } }
+        items(shortcuts, key = { it.second.toString() }) { (name, path) ->
+            AppChip(
+                label = name,
+                secondary = path.toString(),
+                onClick = { onOpenDirectory(path) },
+            )
+        }
+        item {
+            AppChip(
+                label = "设备诊断",
+                secondary = "屏幕、内存、ABI 与存储",
+                onClick = onOpenDeviceInfo,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BrowserScreen(
+    state: BrowserUiState,
+    listState: ScalingLazyListState,
+    onOpenDirectory: (Path) -> Unit,
+    onOpenFile: (FileEntry) -> Unit,
+    onNavigateUp: () -> Unit,
+    onToggleHidden: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val visibleEntries = remember(state.entries, state.showHidden) {
+        if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
+    }
+
+    RoundList(state = listState) {
+        item {
+            ListHeader {
+                Text(
+                    text = folderDisplayName(state.currentPath),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        item {
+            AppChip(label = "返回上级", secondary = state.currentPath.toString(), onClick = onNavigateUp)
+        }
+        item {
+            AppChip(
+                label = if (state.showHidden) "隐藏点文件" else "显示点文件",
+                secondary = "以 . 开头的文件",
+                onClick = onToggleHidden,
+            )
+        }
+        if (state.isLoading) {
+            item { Text("正在读取…") }
+        }
+        state.errorMessage?.let { message ->
+            item {
+                AppChip(label = "读取失败", secondary = message, onClick = onRefresh)
+            }
+        }
+        if (!state.isLoading && state.errorMessage == null && visibleEntries.isEmpty()) {
+            item { Text("此文件夹为空") }
+        }
+        items(visibleEntries, key = { it.path.toString() }) { entry ->
+            FileChip(
+                entry = entry,
+                onOpenDirectory = onOpenDirectory,
+                onOpenFile = onOpenFile,
+            )
+        }
+    }
+}
+
+private fun folderDisplayName(path: Path): String {
+    val storageRoot = Environment.getExternalStorageDirectory().toPath()
+    return if (path == storageRoot) "内部存储" else path.fileName?.toString() ?: "/"
+}
+
+@Composable
+private fun FileChip(
+    entry: FileEntry,
+    onOpenDirectory: (Path) -> Unit,
+    onOpenFile: (FileEntry) -> Unit,
+) {
+    val details = when {
+        entry.isDirectory && !entry.isReadable -> "文件夹 · 不可读取"
+        entry.isDirectory -> "文件夹"
+        entry.sizeBytes != null -> formatBytes(entry.sizeBytes)
+        else -> "文件"
+    }
+    AppChip(
+        label = (if (entry.isDirectory) "▰  " else "▱  ") + entry.name,
+        secondary = details,
+        enabled = !entry.isDirectory || entry.isReadable,
+        onClick = {
+            if (entry.isDirectory) onOpenDirectory(entry.path) else onOpenFile(entry)
+        },
+    )
+}
+
+@Composable
+private fun FileDetailsScreen(
+    entry: FileEntry,
+    onOpenFile: (Path, String) -> String?,
+    onPreviewImage: (FileEntry) -> Unit,
+    onNavigateBack: () -> Unit,
+) {
+    val typeInfo = remember(entry.path) { identifyFileType(entry.path) }
+    var openError by remember(entry.path) { mutableStateOf<String?>(null) }
+
+    RoundList {
+        item { ListHeader { Text("文件详情") } }
+        item {
+            AppChip(
+                label = "返回文件夹",
+                secondary = entry.name,
+                onClick = onNavigateBack,
+            )
+        }
+        if (typeInfo.category == com.example.watchfiles.data.FileCategory.IMAGE) {
+            item {
+                AppChip(
+                    label = "查看图片",
+                    secondary = "内置低内存预览",
+                    enabled = entry.isReadable,
+                    onClick = { onPreviewImage(entry) },
+                )
+            }
+            item {
+                AppChip(
+                    label = "用其他应用打开",
+                    secondary = typeInfo.mimeType,
+                    enabled = entry.isReadable,
+                    onClick = { openError = onOpenFile(entry.path, typeInfo.mimeType) },
+                )
+            }
+        } else {
+            item {
+                AppChip(
+                    label = "打开",
+                    secondary = openActionLabel(typeInfo),
+                    enabled = entry.isReadable,
+                    onClick = { openError = onOpenFile(entry.path, typeInfo.mimeType) },
+                )
+            }
+        }
+        openError?.let { message ->
+            item {
+                AppChip(
+                    label = "无法打开",
+                    secondary = message,
+                    onClick = { openError = null },
+                )
+            }
+        }
+        item { DetailChip("名称", entry.name) }
+        item { DetailChip("类型", typeInfo.category.displayName) }
+        item { DetailChip("MIME", typeInfo.mimeType) }
+        item { DetailChip("大小", entry.sizeBytes?.let(::formatBytes) ?: "未知") }
+        item { DetailChip("修改时间", formatModifiedTime(entry.modifiedAtMillis)) }
+        item {
+            DetailChip(
+                "权限",
+                "读取：${yesNo(entry.isReadable)} · 写入：${yesNo(entry.isWritable)}",
+            )
+        }
+        item { DetailChip("路径", entry.path.toString()) }
+    }
+}
+
+private sealed interface ImageLoadState {
+    data object Loading : ImageLoadState
+    data class Ready(val image: DecodedImage) : ImageLoadState
+    data class Failed(val message: String) : ImageLoadState
+}
+
+@Composable
+private fun ImageViewerScreen(
+    entry: FileEntry,
+    onNavigateBack: () -> Unit,
+) {
+    var loadState by remember(entry.path) { mutableStateOf<ImageLoadState>(ImageLoadState.Loading) }
+
+    LaunchedEffect(entry.path) {
+        loadState = ImageLoadState.Loading
+        loadState = try {
+            ImageLoadState.Ready(decodeLowMemoryImage(entry.path))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            ImageLoadState.Failed(error.message ?: "无法解码此图片")
+        }
+    }
+
+    when (val current = loadState) {
+        ImageLoadState.Loading -> RoundList {
+            item { ListHeader { Text("正在打开图片") } }
+            item { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            item { Text("正在生成低内存预览…", fontSize = 11.sp) }
+            item {
+                AppChip(label = "返回", secondary = "取消加载", onClick = onNavigateBack)
+            }
+        }
+        is ImageLoadState.Failed -> RoundList {
+            item { ListHeader { Text("图片打开失败") } }
+            item { Text(current.message, fontSize = 11.sp) }
+            item {
+                AppChip(label = "返回文件详情", secondary = entry.name, onClick = onNavigateBack)
+            }
+        }
+        is ImageLoadState.Ready -> ImagePreview(
+            decoded = current.image,
+            onNavigateBack = onNavigateBack,
+        )
+    }
+}
+
+@Composable
+private fun ImagePreview(
+    decoded: DecodedImage,
+    onNavigateBack: () -> Unit,
+) {
+    var zoom by remember(decoded.bitmap) { mutableFloatStateOf(1f) }
+    var imageOffset by remember(decoded.bitmap) { mutableStateOf(Offset.Zero) }
+    var viewportSize by remember(decoded.bitmap) { mutableStateOf(IntSize.Zero) }
+    var ignoreTransformsUntil by remember(decoded.bitmap) { mutableLongStateOf(0L) }
+
+    DisposableEffect(decoded.bitmap) {
+        onDispose {
+            if (!decoded.bitmap.isRecycled) decoded.bitmap.recycle()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    start = 12.dp,
+                    top = 38.dp,
+                    end = 12.dp,
+                    bottom = 12.dp,
+                )
+                .clipToBounds()
+                .onSizeChanged { size ->
+                    viewportSize = size
+                    imageOffset = constrainImageOffset(
+                        candidate = imageOffset,
+                        zoom = zoom,
+                        viewportSize = size,
+                        bitmapWidth = decoded.bitmap.width,
+                        bitmapHeight = decoded.bitmap.height,
+                    )
+                }
+                .pointerInput(decoded.bitmap, viewportSize) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            ignoreTransformsUntil = SystemClock.uptimeMillis() + 250L
+                            zoom = if (zoom > 1.01f) 1f else 2f
+                            imageOffset = Offset.Zero
+                        },
+                    )
+                }
+                .pointerInput(decoded.bitmap, viewportSize) {
+                    detectTransformGestures(panZoomLock = true) {
+                            centroid,
+                            pan,
+                            gestureZoom,
+                            _ ->
+                        if (SystemClock.uptimeMillis() < ignoreTransformsUntil) {
+                            return@detectTransformGestures
+                        }
+                        val oldZoom = zoom
+                        val newZoom = (oldZoom * gestureZoom).coerceIn(1f, MAX_IMAGE_ZOOM)
+                        val zoomRatio = newZoom / oldZoom
+                        val viewportCenter = Offset(
+                            x = viewportSize.width / 2f,
+                            y = viewportSize.height / 2f,
+                        )
+                        val focusFromCenter = centroid - viewportCenter
+                        val proposedOffset = Offset(
+                            x = (imageOffset.x - focusFromCenter.x) * zoomRatio +
+                                focusFromCenter.x + pan.x,
+                            y = (imageOffset.y - focusFromCenter.y) * zoomRatio +
+                                focusFromCenter.y + pan.y,
+                        )
+                        zoom = newZoom
+                        imageOffset = constrainImageOffset(
+                            candidate = proposedOffset,
+                            zoom = newZoom,
+                            viewportSize = viewportSize,
+                            bitmapWidth = decoded.bitmap.width,
+                            bitmapHeight = decoded.bitmap.height,
+                        )
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                bitmap = decoded.bitmap.asImageBitmap(),
+                contentDescription = "图片预览",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = imageOffset.x
+                        translationY = imageOffset.y
+                    },
+                contentScale = ContentScale.Fit,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .width(112.dp)
+                .height(38.dp)
+                .clip(TopArcButtonShape)
+                .background(MaterialTheme.colors.primary)
+                .clickable(role = Role.Button, onClick = onNavigateBack)
+                .semantics { contentDescription = "返回文件详情" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "←",
+                color = MaterialTheme.colors.onPrimary,
+                fontSize = 18.sp,
+            )
+        }
+        val previewSize = "${decoded.bitmap.width}×${decoded.bitmap.height}"
+        val sourceSize = "${decoded.sourceWidth}×${decoded.sourceHeight}"
+        val sizeText = if (previewSize == sourceSize) sourceSize else "$sourceSize · 预览 $previewSize"
+        val zoomText = String.format(Locale.ROOT, "%.1f×", zoom)
+        val gestureHint = if (zoom > 1.01f) "拖动查看 · 双击复位" else "双击或双指缩放"
+        val imageStatusText = if (zoom > 1.01f) {
+            "$zoomText · $gestureHint"
+        } else {
+            "$zoomText · $gestureHint\n$sizeText"
+        }
+        Text(
+            text = imageStatusText,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 14.dp)
+                .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            fontSize = 9.sp,
+            maxLines = if (zoom > 1.01f) 1 else 2,
+            textAlign = TextAlign.Center,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun constrainImageOffset(
+    candidate: Offset,
+    zoom: Float,
+    viewportSize: IntSize,
+    bitmapWidth: Int,
+    bitmapHeight: Int,
+): Offset {
+    if (
+        viewportSize.width <= 0 || viewportSize.height <= 0 ||
+        bitmapWidth <= 0 || bitmapHeight <= 0 || zoom <= 1f
+    ) {
+        return Offset.Zero
+    }
+
+    val fitScale = minOf(
+        viewportSize.width.toFloat() / bitmapWidth,
+        viewportSize.height.toFloat() / bitmapHeight,
+    )
+    val displayedWidth = bitmapWidth * fitScale * zoom
+    val displayedHeight = bitmapHeight * fitScale * zoom
+    val maxOffsetX = ((displayedWidth - viewportSize.width) / 2f).coerceAtLeast(0f)
+    val maxOffsetY = ((displayedHeight - viewportSize.height) / 2f).coerceAtLeast(0f)
+    return Offset(
+        x = candidate.x.coerceIn(-maxOffsetX, maxOffsetX),
+        y = candidate.y.coerceIn(-maxOffsetY, maxOffsetY),
+    )
+}
+
+@Composable
+private fun DetailChip(label: String, value: String) {
+    AppChip(label = label, secondary = value, onClick = {})
+}
+
+private fun openActionLabel(typeInfo: FileTypeInfo): String = when (typeInfo.category) {
+    com.example.watchfiles.data.FileCategory.OTHER -> "交给其他应用（类型未知）"
+    else -> "交给其他应用 · ${typeInfo.category.displayName}"
+}
+
+private fun formatModifiedTime(modifiedAtMillis: Long?): String {
+    if (modifiedAtMillis == null) return "未知"
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+        .format(Date(modifiedAtMillis))
+}
+
+private fun yesNo(value: Boolean): String = if (value) "是" else "否"
+
+@Composable
+private fun DeviceInfoScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val snapshot = remember(context) { readDeviceSnapshot(context) }
+
+    RoundList {
+        item { ListHeader { Text("设备诊断") } }
+        items(snapshot.rows, key = { it.first }) { (label, value) ->
+            AppChip(label = label, secondary = value, onClick = {})
+        }
+    }
+}
+
+@Composable
+private fun AppChip(
+    label: String,
+    secondary: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Chip(
+        modifier = modifier.fillMaxWidth(0.9f),
+        onClick = onClick,
+        enabled = enabled,
+        label = {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        secondaryLabel = {
+            Text(secondary, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp)
+        },
+        colors = ChipDefaults.secondaryChipColors(),
+    )
+}
+
+@Composable
+private fun RoundList(
+    state: ScalingLazyListState = rememberScalingLazyListState(),
+    content: androidx.wear.compose.foundation.lazy.ScalingLazyListScope.() -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        ScalingLazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .rotaryScroll(state),
+            state = state,
+            // Xiaomi's modified system omits Google Wear haptic classes.
+            // Our modifier below handles crown scrolling without that dependency.
+            rotaryScrollableBehavior = null,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content,
+        )
+        PositionIndicator(scalingLazyListState = state)
+    }
+}
+
+@Composable
+private fun Modifier.rotaryScroll(state: ScalingLazyListState): Modifier {
+    val focusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    return this
+        .onRotaryScrollEvent { event ->
+            scope.launch { state.scrollBy(event.verticalScrollPixels) }
+            true
+        }
+        .focusRequester(focusRequester)
+        .focusable()
+}
