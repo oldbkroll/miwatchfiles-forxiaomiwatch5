@@ -3,8 +3,11 @@ package com.example.watchfiles.browser
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.watchfiles.data.DirectoryReader
 import com.example.watchfiles.data.DirectPathRepository
 import com.example.watchfiles.data.FileEntry
+import com.example.watchfiles.fileops.FileMutationGateway
+import com.example.watchfiles.fileops.FileMutationRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,12 +22,15 @@ data class BrowserUiState(
     val isLoading: Boolean = false,
     val showHidden: Boolean = false,
     val errorMessage: String? = null,
+    val selection: BrowserSelection = BrowserSelection(),
 )
 
 class FileBrowserViewModel(
-    private val repository: DirectPathRepository = DirectPathRepository(),
+    private val repository: DirectoryReader = DirectPathRepository(),
+    private val mutationRepository: FileMutationGateway = FileMutationRepository(),
+    initialPath: Path = Environment.getExternalStorageDirectory().toPath(),
 ) : ViewModel() {
-    private val _state = MutableStateFlow(BrowserUiState())
+    private val _state = MutableStateFlow(BrowserUiState(currentPath = initialPath))
     val state: StateFlow<BrowserUiState> = _state.asStateFlow()
 
     private var loadJob: Job? = null
@@ -37,13 +43,23 @@ class FileBrowserViewModel(
                 entries = emptyList(),
                 isLoading = true,
                 errorMessage = null,
+                selection = BrowserSelection(),
             )
         }
         loadJob = viewModelScope.launch {
             runCatching { repository.list(path) }
                 .onSuccess { entries ->
                     _state.update { current ->
-                        current.copy(entries = entries, isLoading = false)
+                        val availablePaths = entries.mapTo(HashSet(), FileEntry::path)
+                        current.copy(
+                            entries = entries,
+                            isLoading = false,
+                            selection = current.selection.copy(
+                                selectedPaths = current.selection.selectedPaths.filterTo(
+                                    LinkedHashSet(),
+                                ) { it in availablePaths },
+                            ),
+                        )
                     }
                 }
                 .onFailure { error ->
@@ -65,6 +81,22 @@ class FileBrowserViewModel(
 
     fun toggleHidden() {
         _state.update { it.copy(showHidden = !it.showHidden) }
+    }
+
+    fun beginSelection(path: Path) {
+        _state.update { it.copy(selection = it.selection.begin(path)) }
+    }
+
+    fun toggleSelection(path: Path) {
+        _state.update { it.copy(selection = it.selection.toggle(path)) }
+    }
+
+    fun selectAll(entries: List<FileEntry>) {
+        _state.update { it.copy(selection = it.selection.selectAll(entries.map(FileEntry::path))) }
+    }
+
+    fun clearSelection() {
+        _state.update { it.copy(selection = it.selection.clear()) }
     }
 
     fun refresh() = open(_state.value.currentPath)

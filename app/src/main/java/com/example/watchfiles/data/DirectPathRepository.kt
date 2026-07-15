@@ -8,8 +8,12 @@ import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.Locale
 
-class DirectPathRepository {
-    suspend fun list(path: Path): List<FileEntry> = withContext(Dispatchers.IO) {
+fun interface DirectoryReader {
+    suspend fun list(path: Path): List<FileEntry>
+}
+
+class DirectPathRepository : DirectoryReader {
+    override suspend fun list(path: Path): List<FileEntry> = withContext(Dispatchers.IO) {
         require(Files.isDirectory(path)) { "不是文件夹：$path" }
 
         Files.newDirectoryStream(path).use { directory ->
