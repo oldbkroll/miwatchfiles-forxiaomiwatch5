@@ -18,13 +18,16 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -257,7 +260,13 @@ private fun WatchFilesApp(
 
     BackHandler(enabled = screen != AppScreen.HOME) {
         when (screen) {
-            AppScreen.BROWSER -> navigateBrowserUp()
+            AppScreen.BROWSER -> {
+                if (browserState.selection.isActive) {
+                    browserViewModel.clearSelection()
+                } else {
+                    navigateBrowserUp()
+                }
+            }
             AppScreen.FILE_DETAILS -> screen = AppScreen.BROWSER
             AppScreen.IMAGE_VIEWER -> screen = AppScreen.FILE_DETAILS
             AppScreen.DEVICE_INFO -> screen = AppScreen.HOME
@@ -284,6 +293,13 @@ private fun WatchFilesApp(
             onNavigateUp = navigateBrowserUp,
             onToggleHidden = browserViewModel::toggleHidden,
             onRefresh = browserViewModel::refresh,
+            onBeginSelection = { path ->
+                browserViewModel.beginSelection(path)
+                scope.launch { browserListState.scrollToItem(0) }
+            },
+            onToggleSelection = browserViewModel::toggleSelection,
+            onSelectAll = browserViewModel::selectAll,
+            onClearSelection = browserViewModel::clearSelection,
         )
         AppScreen.FILE_DETAILS -> selectedFile?.let { entry ->
             FileDetailsScreen(
@@ -386,30 +402,60 @@ private fun BrowserScreen(
     onNavigateUp: () -> Unit,
     onToggleHidden: () -> Unit,
     onRefresh: () -> Unit,
+    onBeginSelection: (Path) -> Unit,
+    onToggleSelection: (Path) -> Unit,
+    onSelectAll: (List<FileEntry>) -> Unit,
+    onClearSelection: () -> Unit,
 ) {
     val visibleEntries = remember(state.entries, state.showHidden) {
         if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
     }
 
     RoundList(state = listState) {
-        item {
-            ListHeader {
-                Text(
-                    text = folderDisplayName(state.currentPath),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        if (state.selection.isActive) {
+            item {
+                ListHeader {
+                    Text("已选 ${state.selection.selectedPaths.size} 项")
+                }
+            }
+            item {
+                AppChip(
+                    label = "取消选择",
+                    secondary = "返回普通浏览",
+                    onClick = onClearSelection,
                 )
             }
-        }
-        item {
-            AppChip(label = "返回上级", secondary = state.currentPath.toString(), onClick = onNavigateUp)
-        }
-        item {
-            AppChip(
-                label = if (state.showHidden) "隐藏点文件" else "显示点文件",
-                secondary = "以 . 开头的文件",
-                onClick = onToggleHidden,
-            )
+            item {
+                AppChip(
+                    label = "全选",
+                    secondary = "选择当前可见项目",
+                    onClick = { onSelectAll(visibleEntries) },
+                )
+            }
+        } else {
+            item {
+                ListHeader {
+                    Text(
+                        text = folderDisplayName(state.currentPath),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            item {
+                AppChip(
+                    label = "返回上级",
+                    secondary = state.currentPath.toString(),
+                    onClick = onNavigateUp,
+                )
+            }
+            item {
+                AppChip(
+                    label = if (state.showHidden) "隐藏点文件" else "显示点文件",
+                    secondary = "以 . 开头的文件",
+                    onClick = onToggleHidden,
+                )
+            }
         }
         if (state.isLoading) {
             item { Text("正在读取…") }
@@ -425,8 +471,12 @@ private fun BrowserScreen(
         items(visibleEntries, key = { it.path.toString() }) { entry ->
             FileChip(
                 entry = entry,
+                selected = entry.path in state.selection.selectedPaths,
+                selectionMode = state.selection.isActive,
                 onOpenDirectory = onOpenDirectory,
                 onOpenFile = onOpenFile,
+                onBeginSelection = onBeginSelection,
+                onToggleSelection = onToggleSelection,
             )
         }
     }
@@ -437,11 +487,16 @@ private fun folderDisplayName(path: Path): String {
     return if (path == storageRoot) "内部存储" else path.fileName?.toString() ?: "/"
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileChip(
     entry: FileEntry,
+    selected: Boolean,
+    selectionMode: Boolean,
     onOpenDirectory: (Path) -> Unit,
     onOpenFile: (FileEntry) -> Unit,
+    onBeginSelection: (Path) -> Unit,
+    onToggleSelection: (Path) -> Unit,
 ) {
     val details = when {
         entry.isDirectory && !entry.isReadable -> "文件夹 · 不可读取"
@@ -449,14 +504,43 @@ private fun FileChip(
         entry.sizeBytes != null -> formatBytes(entry.sizeBytes)
         else -> "文件"
     }
-    AppChip(
-        label = (if (entry.isDirectory) "▰  " else "▱  ") + entry.name,
-        secondary = details,
-        enabled = !entry.isDirectory || entry.isReadable,
-        onClick = {
-            if (entry.isDirectory) onOpenDirectory(entry.path) else onOpenFile(entry)
-        },
-    )
+    val clickAction = {
+        if (selectionMode) {
+            onToggleSelection(entry.path)
+        } else if (entry.isDirectory && entry.isReadable) {
+            onOpenDirectory(entry.path)
+        } else if (!entry.isDirectory) {
+            onOpenFile(entry)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth(0.9f)
+            .clip(RoundedCornerShape(28.dp))
+            .background(if (selected) Color(0xFF3F51B5) else Color(0xFF2C2C2E))
+            .combinedClickable(
+                enabled = true,
+                onClick = clickAction,
+                onLongClick = {
+                    if (!selectionMode) onBeginSelection(entry.path)
+                },
+            )
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = (if (selected) "✓  " else if (entry.isDirectory) "▰  " else "▱  ") + entry.name,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = details,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            fontSize = 10.sp,
+            color = Color.LightGray,
+        )
+    }
 }
 
 @Composable
