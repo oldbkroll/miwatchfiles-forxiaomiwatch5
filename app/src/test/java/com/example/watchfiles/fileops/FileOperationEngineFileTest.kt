@@ -2,12 +2,10 @@ package com.example.watchfiles.fileops
 
 import java.io.IOException
 import java.nio.file.AccessDeniedException
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -283,9 +281,9 @@ class FileOperationEngineFileTest {
         val staged = temporaryFile(target, "task-1")
         val backup = backupPath(target, "task-1")
         val operations = object : DelegatingFileSystemOperations() {
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
                 if (sourcePath == staged && targetPath == target) throw IOException("forced publish failure")
-                super.move(sourcePath, targetPath, atomic)
+                super.moveNoReplace(sourcePath, targetPath)
             }
         }
 
@@ -307,11 +305,11 @@ class FileOperationEngineFileTest {
         val staged = temporaryFile(target, "task-1")
         val backup = backupPath(target, "task-1")
         val operations = object : DelegatingFileSystemOperations() {
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
                 when {
                     sourcePath == staged && targetPath == target -> throw IOException("forced publish failure")
                     sourcePath == backup && targetPath == target -> throw IOException("forced restore failure")
-                    else -> super.move(sourcePath, targetPath, atomic)
+                    else -> super.moveNoReplace(sourcePath, targetPath)
                 }
             }
         }
@@ -338,11 +336,11 @@ class FileOperationEngineFileTest {
         val backup = backupPath(target, "task-1")
         val expected = CancellationException("restore cancelled")
         val operations = object : DelegatingFileSystemOperations() {
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
                 when {
                     sourcePath == staged && targetPath == target -> throw IOException("forced publish failure")
                     sourcePath == backup && targetPath == target -> throw expected
-                    else -> super.move(sourcePath, targetPath, atomic)
+                    else -> super.moveNoReplace(sourcePath, targetPath)
                 }
             }
         }
@@ -361,30 +359,68 @@ class FileOperationEngineFileTest {
     }
 
     @Test
-    fun atomicMoveUnsupportedFallsBackToNonAtomicMove() = runTest {
-        val root = temporaryFolder.newFolder("atomic-fallback").toPath()
+    fun newTargetPublicationUsesNoClobberMove() = runTest {
+        val root = temporaryFolder.newFolder("no-clobber-new-target").toPath()
         val sourceBytes = "source".toByteArray()
         val source = Files.write(root.resolve("source.txt"), sourceBytes)
         val targetDirectory = Files.createDirectory(root.resolve("target"))
-        var atomicAttempts = 0
-        var fallbackAttempts = 0
+        val target = targetDirectory.resolve("source.txt")
+        val moves = mutableListOf<Pair<Path, Path>>()
         val operations = object : DelegatingFileSystemOperations() {
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
-                if (atomic) {
-                    atomicAttempts += 1
-                    throw AtomicMoveNotSupportedException(sourcePath.toString(), targetPath.toString(), "forced")
-                }
-                fallbackAttempts += 1
-                super.move(sourcePath, targetPath, false)
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
+                moves += sourcePath to targetPath
+                super.moveNoReplace(sourcePath, targetPath)
             }
         }
 
         val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
 
         assertTrue(outcome is EngineOutcome.Completed)
-        assertEquals(1, atomicAttempts)
-        assertEquals(1, fallbackAttempts)
-        assertArrayEquals(sourceBytes, Files.readAllBytes(targetDirectory.resolve("source.txt")))
+        assertEquals(listOf(temporaryFile(target, "task-1") to target), moves)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(target))
+    }
+
+    @Test
+    fun replacementTransactionUsesOnlyNoClobberMoves() = runTest {
+        val root = temporaryFolder.newFolder("no-clobber-replacement").toPath()
+        val source = Files.write(root.resolve("source.txt"), "new".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), "old".toByteArray())
+        val staged = temporaryFile(target, "task-1")
+        val backup = backupPath(target, "task-1")
+        val moves = mutableListOf<Pair<Path, Path>>()
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
+                moves += sourcePath to targetPath
+                super.moveNoReplace(sourcePath, targetPath)
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(listOf(target to backup, staged to target), moves)
+    }
+
+    @Test
+    fun ordinaryFileCannotReplaceExistingDirectory() = runTest {
+        val root = temporaryFolder.newFolder("reject-directory-target").toPath()
+        val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val existingDirectory = Files.createDirectory(targetDirectory.resolve("source.txt"))
+        val nested = Files.write(existingDirectory.resolve("keep.txt"), "keep".toByteArray())
+        var conflictCalls = 0
+
+        val outcome = executeCopy(source, targetDirectory) {
+            conflictCalls += 1
+            ReplacementDecision.REPLACE_ALL
+        }
+
+        val failure = (outcome as EngineOutcome.Failed).result.failures.single()
+        assertEquals("当前仅支持替换普通文件", failure.userMessage)
+        assertEquals(0, conflictCalls)
+        assertTrue(Files.isDirectory(existingDirectory))
+        assertArrayEquals("keep".toByteArray(), Files.readAllBytes(nested))
     }
 
     @Test
@@ -398,13 +434,13 @@ class FileOperationEngineFileTest {
         val operations = object : DelegatingFileSystemOperations() {
             var injected = false
 
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
                 if (!injected && sourcePath == staged && targetPath == target) {
                     injected = true
                     Files.write(target, lateTargetBytes)
                     throw FileAlreadyExistsException(target.toString())
                 }
-                super.move(sourcePath, targetPath, atomic)
+                super.moveNoReplace(sourcePath, targetPath)
             }
         }
         var conflictCalls = 0
@@ -427,7 +463,7 @@ class FileOperationEngineFileTest {
         val targetDirectory = Files.createDirectory(root.resolve("target"))
         val target = targetDirectory.resolve("source.txt")
         val operations = object : DelegatingFileSystemOperations() {
-            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
                 throw NoSuchFileException(target.toString())
             }
         }
@@ -492,9 +528,8 @@ class FileOperationEngineFileTest {
     )
 
     private open class DelegatingFileSystemOperations : FileSystemOperations {
-        override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
-            if (atomic) Files.move(sourcePath, targetPath, ATOMIC_MOVE)
-            else Files.move(sourcePath, targetPath)
+        override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
+            Files.move(sourcePath, targetPath)
         }
 
         override fun delete(path: Path) {

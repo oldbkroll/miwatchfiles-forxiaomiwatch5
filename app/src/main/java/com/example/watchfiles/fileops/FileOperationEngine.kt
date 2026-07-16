@@ -3,13 +3,11 @@ package com.example.watchfiles.fileops
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.AccessDeniedException
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardOpenOption
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
@@ -43,7 +41,7 @@ fun interface FileByteCopier {
 }
 
 internal interface FileSystemOperations {
-    fun move(source: Path, target: Path, atomic: Boolean)
+    fun moveNoReplace(source: Path, target: Path)
     fun delete(path: Path)
 }
 
@@ -125,6 +123,17 @@ class FileOperationEngine(
                 }
                 val target = request.targetDirectory.resolve(source.fileName)
                 if (Files.exists(target, NOFOLLOW_LINKS)) {
+                    if (!Files.isRegularFile(target, NOFOLLOW_LINKS)) {
+                        return EngineOutcome.Failed(
+                            FileOperationResult(
+                                completedItems = completed,
+                                failedItems = 1,
+                                failures = listOf(
+                                    FileOperationFailure(target, "当前仅支持替换普通文件"),
+                                ),
+                            ),
+                        )
+                    }
                     approveReplacement(source, target)
                 }
                 staged = temporaryFile(target, request.taskId)
@@ -144,6 +153,9 @@ class FileOperationEngine(
                 cancellation.throwIfRequested()
                 while (true) {
                     if (Files.exists(target, NOFOLLOW_LINKS)) {
+                        if (!Files.isRegularFile(target, NOFOLLOW_LINKS)) {
+                            throw UnsupportedReplacementTargetException(target)
+                        }
                         approveReplacement(source, target)
                         publishReplacement(staged, target, request.taskId)
                         break
@@ -237,7 +249,7 @@ class FileOperationEngine(
     }
 
     private fun publishStagedToNewTarget(staged: Path, target: Path) {
-        moveWithAtomicFallback(staged, target)
+        fileSystem.moveNoReplace(staged, target)
     }
 
     private fun publishReplacement(staged: Path, target: Path, taskId: String) {
@@ -245,6 +257,9 @@ class FileOperationEngine(
         if (Files.exists(backup, NOFOLLOW_LINKS)) throw FileAlreadyExistsException(backup.toString())
         moveExistingTargetToBackup(target, backup)
         try {
+            if (!Files.isRegularFile(backup, NOFOLLOW_LINKS)) {
+                throw UnsupportedReplacementTargetException(target)
+            }
             publishStagedOverBackedUpTarget(staged, target)
         } catch (publishError: Exception) {
             try {
@@ -278,23 +293,15 @@ class FileOperationEngine(
     }
 
     private fun moveExistingTargetToBackup(target: Path, backup: Path) {
-        moveWithAtomicFallback(target, backup)
+        fileSystem.moveNoReplace(target, backup)
     }
 
     private fun publishStagedOverBackedUpTarget(staged: Path, target: Path) {
-        moveWithAtomicFallback(staged, target)
+        fileSystem.moveNoReplace(staged, target)
     }
 
     private fun restoreBackupToTarget(backup: Path, target: Path) {
-        moveWithAtomicFallback(backup, target)
-    }
-
-    private fun moveWithAtomicFallback(source: Path, target: Path) {
-        try {
-            fileSystem.move(source, target, atomic = true)
-        } catch (_: AtomicMoveNotSupportedException) {
-            fileSystem.move(source, target, atomic = false)
-        }
+        fileSystem.moveNoReplace(backup, target)
     }
 
     private fun cleanupStaged(staged: Path?): StagedCleanupFailure? {
@@ -328,9 +335,9 @@ private fun operationFailure(
         message.contains("ENOSPC", ignoreCase = true) ||
             message.contains("No space left", ignoreCase = true) -> "可用空间不足"
         error is FileSyncException -> "文件同步失败"
-        error is AtomicMoveNotSupportedException ||
-            error is FileAlreadyExistsException ||
+        error is FileAlreadyExistsException ||
             error is NoSuchFileException -> "目标发布失败"
+        error is UnsupportedReplacementTargetException -> "当前仅支持替换普通文件"
         else -> "复制失败"
     }
     val userMessage = if (cleanupFailure == null) baseUserMessage
@@ -384,9 +391,8 @@ private class NioFileByteCopier : FileByteCopier {
 }
 
 private class NioFileSystemOperations : FileSystemOperations {
-    override fun move(source: Path, target: Path, atomic: Boolean) {
-        if (atomic) Files.move(source, target, ATOMIC_MOVE)
-        else Files.move(source, target)
+    override fun moveNoReplace(source: Path, target: Path) {
+        Files.move(source, target)
     }
 
     override fun delete(path: Path) {
@@ -395,6 +401,9 @@ private class NioFileSystemOperations : FileSystemOperations {
 }
 
 private class FileSyncException(cause: Exception) : IOException(cause.message, cause)
+
+private class UnsupportedReplacementTargetException(val target: Path) :
+    IOException("unsupported replacement target: $target")
 
 private class StagedCleanupFailure(
     val path: Path,
