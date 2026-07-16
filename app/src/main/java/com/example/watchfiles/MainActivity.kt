@@ -99,6 +99,10 @@ import com.example.watchfiles.device.formatBytes
 import com.example.watchfiles.device.readDeviceSnapshot
 import com.example.watchfiles.fileops.FileNameRules
 import com.example.watchfiles.fileops.FileNameValidation
+import com.example.watchfiles.fileops.FileOperationCoordinator
+import com.example.watchfiles.fileops.FileOperationState
+import com.example.watchfiles.fileops.FileOperationType
+import com.example.watchfiles.fileops.TargetDirectoryViewModel
 import com.example.watchfiles.image.DecodedImage
 import com.example.watchfiles.image.decodeLowMemoryImage
 import kotlinx.coroutines.CancellationException
@@ -115,6 +119,8 @@ private enum class AppScreen {
     IMAGE_VIEWER,
     DEVICE_INFO,
     NAME_EDITOR,
+    TARGET_DIRECTORY,
+    FILE_OPERATION,
 }
 
 private sealed interface NameEditorRequest {
@@ -149,6 +155,8 @@ private val TopArcButtonShape = GenericShape { size, _ ->
 
 class MainActivity : ComponentActivity() {
     private val browserViewModel by viewModels<FileBrowserViewModel>()
+    private val targetDirectoryViewModel by viewModels<TargetDirectoryViewModel>()
+    private val fileOperationCoordinator by viewModels<FileOperationCoordinator>()
     private var hasStorageAccess by mutableStateOf(false)
     private val storagePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -167,6 +175,8 @@ class MainActivity : ComponentActivity() {
                     onOpenAppSettings = ::openAppSettings,
                     onOpenFile = ::openFile,
                     browserViewModel = browserViewModel,
+                    targetDirectoryViewModel = targetDirectoryViewModel,
+                    fileOperationCoordinator = fileOperationCoordinator,
                 )
             }
         }
@@ -252,6 +262,8 @@ private fun WatchFilesApp(
     onOpenAppSettings: () -> Unit,
     onOpenFile: (Path, String) -> String?,
     browserViewModel: FileBrowserViewModel,
+    targetDirectoryViewModel: TargetDirectoryViewModel,
+    fileOperationCoordinator: FileOperationCoordinator,
 ) {
     if (!hasStorageAccess) {
         PermissionScreen(onRequestPermission, onOpenAppSettings)
@@ -262,6 +274,9 @@ private fun WatchFilesApp(
     var selectedFile by remember { mutableStateOf<FileEntry?>(null) }
     var nameEditorRequest by remember { mutableStateOf<NameEditorRequest?>(null) }
     val browserState by browserViewModel.state.collectAsState()
+    val targetState by targetDirectoryViewModel.state.collectAsState()
+    val operationState by fileOperationCoordinator.state.collectAsState()
+    var pendingOperationSources by remember { mutableStateOf<List<Path>>(emptyList()) }
     val browserListState = rememberScalingLazyListState()
     val scope = rememberCoroutineScope()
     val storageRoot = remember { Environment.getExternalStorageDirectory().toPath() }
@@ -310,6 +325,8 @@ private fun WatchFilesApp(
                     screen = AppScreen.BROWSER
                 }
             }
+            AppScreen.TARGET_DIRECTORY -> screen = AppScreen.BROWSER
+            AppScreen.FILE_OPERATION -> Unit
             AppScreen.HOME -> Unit
         }
     }
@@ -353,6 +370,11 @@ private fun WatchFilesApp(
                     nameEditorRequest = NameEditorRequest.Rename(selectedEntry)
                     screen = AppScreen.NAME_EDITOR
                 }
+            },
+            onCopySelected = {
+                pendingOperationSources = browserState.selection.selectedPaths.toList()
+                targetDirectoryViewModel.open(browserState.currentPath)
+                screen = AppScreen.TARGET_DIRECTORY
             },
         )
         AppScreen.FILE_DETAILS -> selectedFile?.let { entry ->
@@ -406,6 +428,32 @@ private fun WatchFilesApp(
                 )
             }
         }
+        AppScreen.TARGET_DIRECTORY -> TargetDirectoryScreen(
+            state = targetState,
+            sourceCount = pendingOperationSources.size,
+            onOpenDirectory = targetDirectoryViewModel::open,
+            onNavigateUp = { targetDirectoryViewModel.navigateUp(storageRoot) },
+            onUseCurrent = {
+                if (fileOperationCoordinator.start(
+                        FileOperationType.COPY,
+                        pendingOperationSources,
+                        targetState.currentPath,
+                    )
+                ) screen = AppScreen.FILE_OPERATION
+            },
+            onCancel = { screen = AppScreen.BROWSER },
+        )
+        AppScreen.FILE_OPERATION -> FileOperationScreen(
+            state = operationState,
+            onReplaceAll = fileOperationCoordinator::replaceAll,
+            onCancel = fileOperationCoordinator::cancel,
+            onDone = {
+                browserViewModel.refreshAfterOperation()
+                fileOperationCoordinator.consumeResult()
+                pendingOperationSources = emptyList()
+                screen = AppScreen.BROWSER
+            },
+        )
     }
 }
 
@@ -489,6 +537,7 @@ private fun BrowserScreen(
     onClearSelection: () -> Unit,
     onCreateDirectory: () -> Unit,
     onRenameSelected: () -> Unit,
+    onCopySelected: () -> Unit,
 ) {
     val visibleEntries = remember(state.entries, state.showHidden) {
         if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
@@ -500,6 +549,13 @@ private fun BrowserScreen(
                 ListHeader {
                     Text("已选 ${state.selection.selectedPaths.size} 项")
                 }
+            }
+            item {
+                AppChip(
+                    label = "复制",
+                    secondary = "选择目标文件夹",
+                    onClick = onCopySelected,
+                )
             }
             item {
                 AppChip(
@@ -1037,7 +1093,7 @@ private fun DeviceInfoScreen() {
 }
 
 @Composable
-private fun AppChip(
+internal fun AppChip(
     label: String,
     secondary: String,
     modifier: Modifier = Modifier,
@@ -1059,7 +1115,7 @@ private fun AppChip(
 }
 
 @Composable
-private fun RoundList(
+internal fun RoundList(
     state: ScalingLazyListState = rememberScalingLazyListState(),
     content: androidx.wear.compose.foundation.lazy.ScalingLazyListScope.() -> Unit,
 ) {
