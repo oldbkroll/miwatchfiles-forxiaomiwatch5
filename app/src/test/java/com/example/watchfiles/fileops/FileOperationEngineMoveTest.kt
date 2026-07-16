@@ -2,6 +2,7 @@ package com.example.watchfiles.fileops
 
 import java.io.IOException
 import java.io.OutputStream
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption.CREATE_NEW
@@ -192,6 +193,40 @@ class FileOperationEngineMoveTest {
         assertTrue(sawPublishedTarget)
         assertFalse(Files.exists(source))
         assertArrayEquals(bytes, Files.readAllBytes(target))
+    }
+
+    @Test fun fastMoveAccessDeniedFallsBackToCopyVerifyAndDelete() = runTest {
+        val root = temporaryFolder.newFolder("fast-access-denied-fallback").toPath()
+        val bytes = "fallback-after-fast-denied".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), bytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val engine = engine(
+            fastMover = FastMover { from, to ->
+                throw AccessDeniedException(from.toString(), to.toString(), "rename denied")
+            },
+        )
+
+        val outcome = executeMove(source, targetDirectory, engine)
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertFalse(Files.exists(source))
+        assertArrayEquals(bytes, Files.readAllBytes(targetDirectory.resolve("source.txt")))
+    }
+
+    @Test fun fastMoveSecurityExceptionFallsBackToCopyVerifyAndDelete() = runTest {
+        val root = temporaryFolder.newFolder("fast-security-fallback").toPath()
+        val bytes = "fallback-after-fast-security".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), bytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val engine = engine(
+            fastMover = FastMover { _, _ -> throw SecurityException("getFileStore") },
+        )
+
+        val outcome = executeMove(source, targetDirectory, engine)
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertFalse(Files.exists(source))
+        assertArrayEquals(bytes, Files.readAllBytes(targetDirectory.resolve("source.txt")))
     }
 
     @Test fun sourceDeleteFailureKeepsPublishedTargetAndReturnsPartial() = runTest {

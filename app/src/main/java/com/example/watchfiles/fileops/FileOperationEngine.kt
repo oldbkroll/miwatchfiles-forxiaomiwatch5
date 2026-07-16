@@ -135,17 +135,23 @@ class FileOperationEngine(
                         approveReplacement(source, target)
                         cancellation.throwIfRequested()
                     }
-                    val moved = if (targetExistsAfterMeasure) {
-                        tryFastMoveReplacement(source, target, request.taskId)
-                    } else {
-                        try {
-                            fastMover.move(source, target)
-                        } catch (error: FileAlreadyExistsException) {
-                            if (!Files.exists(target, NOFOLLOW_LINKS)) throw error
-                            approveReplacement(source, target)
-                            cancellation.throwIfRequested()
+                    val moved = try {
+                        if (targetExistsAfterMeasure) {
                             tryFastMoveReplacement(source, target, request.taskId)
+                        } else {
+                            try {
+                                fastMover.move(source, target)
+                            } catch (error: FileAlreadyExistsException) {
+                                if (!Files.exists(target, NOFOLLOW_LINKS)) throw error
+                                approveReplacement(source, target)
+                                cancellation.throwIfRequested()
+                                tryFastMoveReplacement(source, target, request.taskId)
+                            }
                         }
+                    } catch (_: AccessDeniedException) {
+                        false
+                    } catch (_: SecurityException) {
+                        false
                     }
                     if (moved) {
                         completed += 1
