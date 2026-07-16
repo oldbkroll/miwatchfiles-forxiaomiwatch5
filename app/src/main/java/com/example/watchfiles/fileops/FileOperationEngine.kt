@@ -53,6 +53,10 @@ fun interface SourceDeleter {
     fun delete(source: Path)
 }
 
+internal fun interface SourceProgressMeasurer {
+    fun measure(source: Path, cancellation: OperationCancellation): SourceProgress
+}
+
 internal interface FileSystemOperations {
     fun createNewFile(path: Path): OutputStream
     fun moveNoReplace(source: Path, target: Path)
@@ -66,14 +70,17 @@ class FileOperationEngine(
     private val sourceDeleter: SourceDeleter = NioSourceDeleter(),
 ) : OperationEngineGateway {
     private var fileSystem: FileSystemOperations = NioFileSystemOperations()
+    private var sourceProgressMeasurer: SourceProgressMeasurer = NioSourceProgressMeasurer()
 
     internal constructor(
         byteCopier: FileByteCopier = NioFileByteCopier(),
         fileSystem: FileSystemOperations,
         fastMover: FastMover = NioFastMover(),
         sourceDeleter: SourceDeleter = NioSourceDeleter(),
+        sourceProgressMeasurer: SourceProgressMeasurer = NioSourceProgressMeasurer(),
     ) : this(Dispatchers.IO, byteCopier, fastMover, sourceDeleter) {
         this.fileSystem = fileSystem
+        this.sourceProgressMeasurer = sourceProgressMeasurer
     }
 
     override suspend fun execute(
@@ -121,9 +128,14 @@ class FileOperationEngine(
                 val targetExisted = Files.exists(target, NOFOLLOW_LINKS)
                 if (targetExisted) approveReplacement(source, target)
                 if (request.type == FileOperationType.MOVE) {
-                    val sourceProgress = measureSourceProgress(source, cancellation)
+                    val sourceProgress = sourceProgressMeasurer.measure(source, cancellation)
                     cancellation.throwIfRequested()
-                    val moved = if (Files.exists(target, NOFOLLOW_LINKS)) {
+                    val targetExistsAfterMeasure = Files.exists(target, NOFOLLOW_LINKS)
+                    if (targetExistsAfterMeasure && !targetExisted) {
+                        approveReplacement(source, target)
+                        cancellation.throwIfRequested()
+                    }
+                    val moved = if (targetExistsAfterMeasure) {
                         tryFastMoveReplacement(source, target, request.taskId)
                     } else {
                         try {
@@ -412,32 +424,6 @@ class FileOperationEngine(
         }
     }
 
-    private fun measureSourceProgress(
-        source: Path,
-        cancellation: OperationCancellation,
-    ): SourceProgress {
-        var itemCount = 0
-        var totalBytes = 0L
-        Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {
-            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                cancellation.throwIfRequested()
-                itemCount += 1
-                return FileVisitResult.CONTINUE
-            }
-
-            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                cancellation.throwIfRequested()
-                if (!attrs.isRegularFile || Files.isSymbolicLink(file)) {
-                    throw UnsupportedSymbolicLinkException(file)
-                }
-                itemCount += 1
-                totalBytes = Math.addExact(totalBytes, attrs.size())
-                return FileVisitResult.CONTINUE
-            }
-        })
-        return SourceProgress(itemCount, totalBytes)
-    }
-
     private fun copyDirectory(
         source: Path,
         staged: Path,
@@ -580,6 +566,31 @@ private class NioFastMover : FastMover {
     }
 }
 
+internal class NioSourceProgressMeasurer : SourceProgressMeasurer {
+    override fun measure(source: Path, cancellation: OperationCancellation): SourceProgress {
+        var itemCount = 0
+        var totalBytes = 0L
+        Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                itemCount += 1
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                if (!attrs.isRegularFile || Files.isSymbolicLink(file)) {
+                    throw UnsupportedSymbolicLinkException(file)
+                }
+                itemCount += 1
+                totalBytes = Math.addExact(totalBytes, attrs.size())
+                return FileVisitResult.CONTINUE
+            }
+        })
+        return SourceProgress(itemCount, totalBytes)
+    }
+}
+
 private class NioSourceDeleter : SourceDeleter {
     override fun delete(source: Path) {
         deleteRecursivelyNoFollow(source)
@@ -621,7 +632,7 @@ private class NioFileSystemOperations : FileSystemOperations {
 
 private class FileSyncException(cause: Exception) : IOException(cause.message, cause)
 
-private data class SourceProgress(val itemCount: Int, val totalBytes: Long)
+internal data class SourceProgress(val itemCount: Int, val totalBytes: Long)
 
 private class UnsupportedSymbolicLinkException(val path: Path) :
     IOException("unsupported symbolic link: $path")

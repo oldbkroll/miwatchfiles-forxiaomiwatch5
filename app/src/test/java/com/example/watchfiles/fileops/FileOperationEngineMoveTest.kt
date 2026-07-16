@@ -92,6 +92,38 @@ class FileOperationEngineMoveTest {
         assertFalse(Files.exists(backupPath(target, "move-task")))
     }
 
+    @Test fun targetCreatedDuringSourceMeasurementRequiresReplacementApproval() = runTest {
+        val root = temporaryFolder.newFolder("late-fast-conflict").toPath()
+        val newBytes = "new".toByteArray()
+        val oldBytes = "late-old".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), newBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        var fastMoves = 0
+        var conflictCalls = 0
+        val engine = engine(
+            fastMover = FastMover { _, _ -> fastMoves += 1; true },
+            sourceProgressMeasurer = SourceProgressMeasurer { measuredSource, _ ->
+                Files.write(target, oldBytes)
+                SourceProgress(1, Files.size(measuredSource))
+            },
+        )
+
+        val outcome = engine.execute(
+            FileOperationRequest("move-task", FileOperationType.MOVE, listOf(source), targetDirectory),
+            ScanOutcome.Ready(1, newBytes.size.toLong()),
+            OperationCancellation(),
+            {},
+            { conflictCalls += 1; ReplacementDecision.CANCEL },
+        )
+
+        assertTrue(outcome is EngineOutcome.Cancelled)
+        assertEquals(1, conflictCalls)
+        assertEquals(0, fastMoves)
+        assertArrayEquals(newBytes, Files.readAllBytes(source))
+        assertArrayEquals(oldBytes, Files.readAllBytes(target))
+    }
+
     @Test fun fastReplacementFailureRestoresOldTargetAndKeepsSource() = runTest {
         val root = temporaryFolder.newFolder("fast-replacement-restore").toPath()
         val newBytes = "new".toByteArray()
@@ -245,7 +277,8 @@ class FileOperationEngineMoveTest {
         fileSystem: FileSystemOperations = TestFileSystemOperations(),
         fastMover: FastMover,
         sourceDeleter: SourceDeleter = SourceDeleter { deleteRecursively(it) },
-    ) = FileOperationEngine(byteCopier, fileSystem, fastMover, sourceDeleter)
+        sourceProgressMeasurer: SourceProgressMeasurer = NioSourceProgressMeasurer(),
+    ) = FileOperationEngine(byteCopier, fileSystem, fastMover, sourceDeleter, sourceProgressMeasurer)
 
     private suspend fun executeMove(
         source: Path,
