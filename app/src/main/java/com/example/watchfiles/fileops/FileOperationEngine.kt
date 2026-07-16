@@ -2,6 +2,7 @@ package com.example.watchfiles.fileops
 
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileVisitResult
@@ -45,6 +46,7 @@ fun interface FileByteCopier {
 }
 
 internal interface FileSystemOperations {
+    fun createNewFile(path: Path): OutputStream
     fun moveNoReplace(source: Path, target: Path)
     fun delete(path: Path)
 }
@@ -134,8 +136,9 @@ class FileOperationEngine(
                     )
                 } else {
                     val fileStage = temporaryFile(target, request.taskId)
-                    Files.newOutputStream(fileStage, StandardOpenOption.CREATE_NEW).close()
+                    val emptyStage = fileSystem.createNewFile(fileStage)
                     staged = fileStage
+                    emptyStage.use { }
                     byteCopier.copy(source, fileStage, cancellation) { count ->
                         processedBytes += count
                         onProgress(progress(source.fileName.toString(), progressItems, scan, processedBytes))
@@ -436,6 +439,9 @@ private class NioFileByteCopier : FileByteCopier {
 }
 
 private class NioFileSystemOperations : FileSystemOperations {
+    override fun createNewFile(path: Path): OutputStream =
+        Files.newOutputStream(path, StandardOpenOption.CREATE_NEW)
+
     override fun moveNoReplace(source: Path, target: Path) {
         Files.move(source, target)
     }

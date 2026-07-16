@@ -1,12 +1,15 @@
 package com.example.watchfiles.fileops
 
 import java.io.IOException
+import java.io.FilterOutputStream
+import java.io.OutputStream
 import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import java.nio.file.StandardOpenOption.CREATE_NEW
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
@@ -92,6 +95,31 @@ class FileOperationEngineFileTest {
         assertArrayEquals(userBytes, Files.readAllBytes(preexistingStage))
         assertArrayEquals(sourceBytes, Files.readAllBytes(source))
         assertFalse(Files.exists(target))
+    }
+
+    @Test
+    fun closeFailureAfterCreatingTaskTemporaryFileCleansOwnedPath() = runTest {
+        val root = temporaryFolder.newFolder("task-part-close-failure").toPath()
+        val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val staged = temporaryFile(targetDirectory.resolve("source.txt"), "task-1")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun createNewFile(path: Path): OutputStream {
+                val delegate = Files.newOutputStream(path, CREATE_NEW)
+                return object : FilterOutputStream(delegate) {
+                    override fun close() {
+                        super.close()
+                        throw IOException("forced close failure")
+                    }
+                }
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        assertTrue(outcome is EngineOutcome.Failed)
+        assertFalse(Files.exists(staged))
+        assertTrue(Files.exists(source))
     }
 
     @Test
@@ -546,6 +574,8 @@ class FileOperationEngineFileTest {
     )
 
     private open class DelegatingFileSystemOperations : FileSystemOperations {
+        override fun createNewFile(path: Path): OutputStream = Files.newOutputStream(path, CREATE_NEW)
+
         override fun moveNoReplace(sourcePath: Path, targetPath: Path) {
             Files.move(sourcePath, targetPath)
         }
