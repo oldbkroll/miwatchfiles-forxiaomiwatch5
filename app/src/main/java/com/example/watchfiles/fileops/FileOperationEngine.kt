@@ -117,6 +117,7 @@ class FileOperationEngine(
                 if (Files.exists(target, NOFOLLOW_LINKS)) approveReplacement(source, target)
                 if (Files.isDirectory(source, NOFOLLOW_LINKS)) {
                     val directoryStage = temporaryDirectory(target, request.taskId)
+                    Files.createDirectory(directoryStage)
                     staged = directoryStage
                     copyDirectory(
                         source = source,
@@ -133,8 +134,8 @@ class FileOperationEngine(
                     )
                 } else {
                     val fileStage = temporaryFile(target, request.taskId)
-                    staged = fileStage
                     Files.newOutputStream(fileStage, StandardOpenOption.CREATE_NEW).close()
+                    staged = fileStage
                     byteCopier.copy(source, fileStage, cancellation) { count ->
                         processedBytes += count
                         onProgress(progress(source.fileName.toString(), progressItems, scan, processedBytes))
@@ -309,7 +310,6 @@ class FileOperationEngine(
         onEntry: (String) -> Unit,
         onBytes: (String, Long) -> Unit,
     ) {
-        Files.createDirectory(staged)
         cancellation.throwIfRequested()
         onEntry(source.fileName?.toString().orEmpty())
         Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {

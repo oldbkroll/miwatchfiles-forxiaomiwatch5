@@ -432,7 +432,7 @@ private fun WatchFilesApp(
             state = targetState,
             sourceCount = pendingOperationSources.size,
             onOpenDirectory = targetDirectoryViewModel::open,
-            onNavigateUp = { targetDirectoryViewModel.navigateUp(storageRoot) },
+            onNavigateUp = targetDirectoryViewModel::navigateUp,
             onUseCurrent = {
                 if (fileOperationCoordinator.start(
                         FileOperationType.COPY,

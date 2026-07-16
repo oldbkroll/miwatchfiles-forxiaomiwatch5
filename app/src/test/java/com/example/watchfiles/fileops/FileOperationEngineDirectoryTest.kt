@@ -118,6 +118,25 @@ class FileOperationEngineDirectoryTest {
         assertArrayEquals("directory".toByteArray(), Files.readAllBytes(target.resolve("nested.txt")))
     }
 
+    @Test
+    fun exactTaskTemporaryDirectoryCollisionIsNeverDeleted() = runTest {
+        val root = temporaryFolder.newFolder("task-directory-collision").toPath()
+        val source = Files.createDirectory(root.resolve("source"))
+        Files.write(source.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source")
+        val preexistingStage = Files.createDirectory(temporaryDirectory(target, "directory-task"))
+        val markerBytes = "preexisting-user-data".toByteArray()
+        val marker = Files.write(preexistingStage.resolve("marker.txt"), markerBytes)
+
+        val outcome = execute(listOf(source), targetDirectory)
+
+        assertTrue(outcome is EngineOutcome.Failed)
+        assertArrayEquals(markerBytes, Files.readAllBytes(marker))
+        assertTrue(Files.exists(source.resolve("source.txt")))
+        assertFalse(Files.exists(target))
+    }
+
     private suspend fun execute(
         sources: List<Path>,
         targetDirectory: Path,

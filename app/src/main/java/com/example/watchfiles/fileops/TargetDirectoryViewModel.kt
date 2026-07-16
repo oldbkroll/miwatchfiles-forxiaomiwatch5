@@ -23,17 +23,26 @@ data class TargetDirectoryUiState(
 
 class TargetDirectoryViewModel(
     private val repository: DirectoryReader = DirectPathRepository(),
-    initialPath: Path = Environment.getExternalStorageDirectory().toPath(),
+    storageRoot: Path = Environment.getExternalStorageDirectory().toPath(),
+    initialPath: Path = storageRoot,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(TargetDirectoryUiState(initialPath))
+    private val storageRoot = storageRoot.toAbsolutePath().normalize()
+    private val initialPath = initialPath.toAbsolutePath().normalize()
+        .takeIf { it.startsWith(this.storageRoot) } ?: this.storageRoot
+    private val _state = MutableStateFlow(TargetDirectoryUiState(this.initialPath))
     val state: StateFlow<TargetDirectoryUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
 
     fun open(path: Path) {
+        val candidate = path.toAbsolutePath().normalize()
+        if (!candidate.startsWith(storageRoot)) {
+            _state.update { it.copy(errorMessage = "目标目录超出内部存储范围") }
+            return
+        }
         loadJob?.cancel()
-        _state.update { it.copy(currentPath = path, directories = emptyList(), isLoading = true, errorMessage = null) }
+        _state.update { it.copy(currentPath = candidate, directories = emptyList(), isLoading = true, errorMessage = null) }
         loadJob = viewModelScope.launch {
-            runCatching { repository.list(path) }
+            runCatching { repository.list(candidate) }
                 .onSuccess { entries ->
                     _state.update { it.copy(directories = entries.filter(FileEntry::isDirectory), isLoading = false) }
                 }
@@ -43,13 +52,11 @@ class TargetDirectoryViewModel(
         }
     }
 
-    fun navigateUp(storageRoot: Path): Boolean {
-        val root = storageRoot.toAbsolutePath().normalize()
-        val currentPath = _state.value.currentPath.normalize()
-        val current = currentPath.toAbsolutePath().normalize()
-        if (current == root || !current.startsWith(root)) return false
-        val parent = currentPath.parent ?: return false
-        if (!parent.toAbsolutePath().normalize().startsWith(root)) return false
+    fun navigateUp(): Boolean {
+        val current = _state.value.currentPath.toAbsolutePath().normalize()
+        if (current == storageRoot || !current.startsWith(storageRoot)) return false
+        val parent = current.parent ?: return false
+        if (!parent.startsWith(storageRoot)) return false
         open(parent)
         return true
     }

@@ -77,6 +77,24 @@ class FileOperationEngineFileTest {
     }
 
     @Test
+    fun exactTaskTemporaryFileCollisionIsNeverDeleted() = runTest {
+        val root = temporaryFolder.newFolder("task-part-collision").toPath()
+        val sourceBytes = "source".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        val userBytes = "preexisting-user-data".toByteArray()
+        val preexistingStage = Files.write(temporaryFile(target, "task-1"), userBytes)
+
+        val outcome = executeCopy(source, targetDirectory)
+
+        assertTrue(outcome is EngineOutcome.Failed)
+        assertArrayEquals(userBytes, Files.readAllBytes(preexistingStage))
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
+        assertFalse(Files.exists(target))
+    }
+
+    @Test
     fun sourceMissingAfterScanReportsSourceDisappeared() = runTest {
         val root = temporaryFolder.newFolder("missing-source").toPath()
         val source = Files.write(root.resolve("gone.txt"), byteArrayOf(1, 2, 3))

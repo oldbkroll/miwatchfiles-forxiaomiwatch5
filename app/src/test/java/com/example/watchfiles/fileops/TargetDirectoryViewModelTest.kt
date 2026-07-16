@@ -31,16 +31,26 @@ class TargetDirectoryViewModelTest {
 
     @Test fun navigateUpNeverEscapesStorageRoot() = runTest {
         val child = root.resolve("Download/Test")
-        val viewModel = TargetDirectoryViewModel(DirectoryReader { emptyList() }, child)
+        val viewModel = TargetDirectoryViewModel(DirectoryReader { emptyList() }, root, child)
         viewModel.open(child)
         advanceUntilIdle()
-        assertTrue(viewModel.navigateUp(root))
+        assertTrue(viewModel.navigateUp())
         advanceUntilIdle()
-        assertEquals(root.resolve("Download"), viewModel.state.value.currentPath)
+        assertEquals(root.resolve("Download").toAbsolutePath().normalize(), viewModel.state.value.currentPath)
         viewModel.open(root)
         advanceUntilIdle()
-        assertFalse(viewModel.navigateUp(root))
-        assertEquals(root, viewModel.state.value.currentPath)
+        assertFalse(viewModel.navigateUp())
+        assertEquals(root.toAbsolutePath().normalize(), viewModel.state.value.currentPath)
+    }
+
+    @Test fun openRejectsPathsOutsideStorageRoot() = runTest {
+        val viewModel = TargetDirectoryViewModel(DirectoryReader { emptyList() }, root)
+
+        viewModel.open(Paths.get("/storage/emulated/elsewhere"))
+        advanceUntilIdle()
+
+        assertEquals(root.toAbsolutePath().normalize(), viewModel.state.value.currentPath)
+        assertEquals("目标目录超出内部存储范围", viewModel.state.value.errorMessage)
     }
 
     private fun entry(path: Path, directory: Boolean) = FileEntry(path, path.fileName.toString(), directory, null, null, false, true, true)
