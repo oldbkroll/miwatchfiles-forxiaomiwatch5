@@ -99,6 +99,22 @@ class FileOperationCoordinatorTest {
         }
     }
 
+    @Test fun movePartialOutcomePreservesMoveTypeAndFailure() = runTest {
+        val result = FileOperationResult(
+            completedItems = 1,
+            failedItems = 1,
+            failures = listOf(FileOperationFailure(source, "目标已保留，但源项目删除失败")),
+        )
+        val coordinator = coordinator(engine = engine { EngineOutcome.Partial(result) })
+
+        coordinator.start(FileOperationType.MOVE, listOf(source), target)
+        advanceUntilIdle()
+
+        val state = coordinator.state.value as FileOperationState.PartiallySucceeded
+        assertEquals(FileOperationType.MOVE, state.type)
+        assertEquals(result, state.result)
+    }
+
     @Test fun consumeResultReturnsToIdle() = runTest {
         val coordinator = coordinator()
         coordinator.start(FileOperationType.COPY, listOf(source), target)

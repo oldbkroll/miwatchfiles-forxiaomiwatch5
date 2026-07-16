@@ -190,20 +190,6 @@ class FileOperationEngineFileTest {
     }
 
     @Test
-    fun moveRequestIsRejectedWithoutCopying() = runTest {
-        val root = temporaryFolder.newFolder("reject-move").toPath()
-        val sourceBytes = "move-source".toByteArray()
-        val source = Files.write(root.resolve("source.txt"), sourceBytes)
-        val targetDirectory = Files.createDirectory(root.resolve("target"))
-
-        val outcome = executeCopy(source, targetDirectory, type = FileOperationType.MOVE)
-
-        assertEquals("当前仅支持复制文件", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
-        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
-        assertFalse(Files.exists(targetDirectory.resolve("source.txt")))
-    }
-
-    @Test
     fun directoryIsCopiedRecursively() = runTest {
         val root = temporaryFolder.newFolder("reject-directory").toPath()
         val source = Files.createDirectory(root.resolve("source"))

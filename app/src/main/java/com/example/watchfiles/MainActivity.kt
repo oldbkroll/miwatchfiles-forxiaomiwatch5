@@ -277,6 +277,7 @@ private fun WatchFilesApp(
     val targetState by targetDirectoryViewModel.state.collectAsState()
     val operationState by fileOperationCoordinator.state.collectAsState()
     var pendingOperationSources by remember { mutableStateOf<List<Path>>(emptyList()) }
+    var pendingOperationType by remember { mutableStateOf(FileOperationType.COPY) }
     val browserListState = rememberScalingLazyListState()
     val scope = rememberCoroutineScope()
     val storageRoot = remember { Environment.getExternalStorageDirectory().toPath() }
@@ -372,6 +373,13 @@ private fun WatchFilesApp(
                 }
             },
             onCopySelected = {
+                pendingOperationType = FileOperationType.COPY
+                pendingOperationSources = browserState.selection.selectedPaths.toList()
+                targetDirectoryViewModel.open(browserState.currentPath)
+                screen = AppScreen.TARGET_DIRECTORY
+            },
+            onMoveSelected = {
+                pendingOperationType = FileOperationType.MOVE
                 pendingOperationSources = browserState.selection.selectedPaths.toList()
                 targetDirectoryViewModel.open(browserState.currentPath)
                 screen = AppScreen.TARGET_DIRECTORY
@@ -435,7 +443,7 @@ private fun WatchFilesApp(
             onNavigateUp = targetDirectoryViewModel::navigateUp,
             onUseCurrent = {
                 if (fileOperationCoordinator.start(
-                        FileOperationType.COPY,
+                        pendingOperationType,
                         pendingOperationSources,
                         targetState.currentPath,
                     )
@@ -538,6 +546,7 @@ private fun BrowserScreen(
     onCreateDirectory: () -> Unit,
     onRenameSelected: () -> Unit,
     onCopySelected: () -> Unit,
+    onMoveSelected: () -> Unit,
 ) {
     val visibleEntries = remember(state.entries, state.showHidden) {
         if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
@@ -555,6 +564,13 @@ private fun BrowserScreen(
                     label = "复制",
                     secondary = "选择目标文件夹",
                     onClick = onCopySelected,
+                )
+            }
+            item {
+                AppChip(
+                    label = "移动",
+                    secondary = "复制成功后删除源项目",
+                    onClick = onMoveSelected,
                 )
             }
             item {

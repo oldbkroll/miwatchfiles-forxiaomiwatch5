@@ -6,6 +6,7 @@ import androidx.wear.compose.material.ListHeader
 import androidx.wear.compose.material.Text
 import com.example.watchfiles.device.formatBytes
 import com.example.watchfiles.fileops.FileOperationState
+import com.example.watchfiles.fileops.FileOperationType
 import com.example.watchfiles.fileops.TargetDirectoryUiState
 import java.nio.file.Path
 
@@ -47,25 +48,45 @@ internal fun FileOperationScreen(
             }
             is FileOperationState.Running -> {
                 val progress = state.progress
-                item { ListHeader { Text(if (state.type.name == "COPY") "正在复制" else "正在移动") } }
+                item { ListHeader { Text(if (state.type == FileOperationType.COPY) "正在复制" else "正在移动") } }
                 item { AppChip(progress.currentName ?: "准备中", "${progress.processedItems} / ${progress.totalItems}", onClick = {}) }
                 item {
                     val bytes = progress.totalBytes?.let { "${formatBytes(progress.processedBytes)} / ${formatBytes(it)}" }
                         ?: "已处理 ${formatBytes(progress.processedBytes)}"
                     AppChip("数据进度", bytes, onClick = {})
                 }
-                item { AppChip("取消", "停止并清理未发布项目", onClick = onCancel) }
+                val cancelMessage = if (state.type == FileOperationType.COPY) {
+                    "停止并清理未发布项目"
+                } else {
+                    "停止；已完成项目保留在目标"
+                }
+                item { AppChip("取消", cancelMessage, onClick = onCancel) }
             }
             is FileOperationState.WaitingForReplacement -> {
                 item { ListHeader { Text("发现同名项目") } }
-                item { AppChip(state.conflict.target.fileName.toString(), "目录会整体替换，不会合并", onClick = {}) }
+                item { AppChip(state.conflict.target.fileName.toString(), "现有同名项目会整体替换，不会合并", onClick = {}) }
                 item { AppChip("替换全部", "本任务后续同名项目不再询问", onClick = onReplaceAll) }
                 item { AppChip("取消任务", "保留现有目标", onClick = onCancel) }
             }
-            is FileOperationState.Cancelling -> item { ListHeader { Text("正在停止并清理临时文件…") } }
-            is FileOperationState.Succeeded -> terminal("复制完成", state.result, onDone)
+            is FileOperationState.Cancelling -> item {
+                val message = if (state.type == FileOperationType.COPY) {
+                    "正在停止并清理临时文件…"
+                } else {
+                    "正在停止；已完成项目保留在目标…"
+                }
+                ListHeader { Text(message) }
+            }
+            is FileOperationState.Succeeded -> terminal(
+                if (state.type == FileOperationType.COPY) "复制完成" else "移动完成",
+                state.result,
+                onDone,
+            )
             is FileOperationState.PartiallySucceeded -> terminal("部分完成", state.result, onDone)
-            is FileOperationState.Failed -> terminal("复制失败", state.result, onDone)
+            is FileOperationState.Failed -> terminal(
+                if (state.type == FileOperationType.COPY) "复制失败" else "移动失败",
+                state.result,
+                onDone,
+            )
             is FileOperationState.Cancelled -> terminal("任务已取消", state.result, onDone)
         }
     }

@@ -45,6 +45,14 @@ fun interface FileByteCopier {
     )
 }
 
+fun interface FastMover {
+    fun move(source: Path, target: Path): Boolean
+}
+
+fun interface SourceDeleter {
+    fun delete(source: Path)
+}
+
 internal interface FileSystemOperations {
     fun createNewFile(path: Path): OutputStream
     fun moveNoReplace(source: Path, target: Path)
@@ -54,13 +62,17 @@ internal interface FileSystemOperations {
 class FileOperationEngine(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val byteCopier: FileByteCopier = NioFileByteCopier(),
+    private val fastMover: FastMover = NioFastMover(),
+    private val sourceDeleter: SourceDeleter = NioSourceDeleter(),
 ) : OperationEngineGateway {
     private var fileSystem: FileSystemOperations = NioFileSystemOperations()
 
     internal constructor(
         byteCopier: FileByteCopier = NioFileByteCopier(),
         fileSystem: FileSystemOperations,
-    ) : this(Dispatchers.IO, byteCopier) {
+        fastMover: FastMover = NioFastMover(),
+        sourceDeleter: SourceDeleter = NioSourceDeleter(),
+    ) : this(Dispatchers.IO, byteCopier, fastMover, sourceDeleter) {
         this.fileSystem = fileSystem
     }
 
@@ -87,16 +99,6 @@ class FileOperationEngine(
         var staged: Path? = null
         var progressItems = 0
         return try {
-            if (request.type != FileOperationType.COPY) {
-                return EngineOutcome.Failed(
-                    FileOperationResult(
-                        completedItems = 0,
-                        failedItems = 1,
-                        failures = listOf(FileOperationFailure(request.sources.firstOrNull(), "当前仅支持复制文件")),
-                    ),
-                )
-            }
-
             suspend fun approveReplacement(source: Path, target: Path) {
                 if (replaceAll) return
                 if (onConflict(FileConflict(source, target)) == ReplacementDecision.CANCEL) {
@@ -117,6 +119,22 @@ class FileOperationEngine(
                 }
                 val target = request.targetDirectory.resolve(source.fileName)
                 if (Files.exists(target, NOFOLLOW_LINKS)) approveReplacement(source, target)
+                if (request.type == FileOperationType.MOVE && !Files.exists(target, NOFOLLOW_LINKS)) {
+                    val moved = try {
+                        fastMover.move(source, target)
+                    } catch (error: FileAlreadyExistsException) {
+                        if (!Files.exists(target, NOFOLLOW_LINKS)) throw error
+                        approveReplacement(source, target)
+                        false
+                    }
+                    if (moved) {
+                        completed += 1
+                        progressItems += 1
+                        processedBytes += scan.totalBytes ?: 0
+                        onProgress(progress(source.fileName.toString(), progressItems, scan, processedBytes))
+                        continue
+                    }
+                }
                 if (Files.isDirectory(source, NOFOLLOW_LINKS)) {
                     val directoryStage = temporaryDirectory(target, request.taskId)
                     Files.createDirectory(directoryStage)
@@ -161,6 +179,28 @@ class FileOperationEngine(
                     }
                 }
                 staged = null
+                if (request.type == FileOperationType.MOVE) {
+                    verifyPublishedTarget(source, target)
+                    try {
+                        sourceDeleter.delete(source)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        return EngineOutcome.Partial(
+                            FileOperationResult(
+                                completedItems = completed + 1,
+                                failedItems = 1,
+                                failures = listOf(
+                                    FileOperationFailure(
+                                        source = source,
+                                        userMessage = "目标已保留，但源项目删除失败",
+                                        technicalMessage = error.message ?: error.javaClass.simpleName,
+                                    ),
+                                ),
+                            ),
+                        )
+                    }
+                }
                 completed += 1
                 onProgress(
                     progress(source.fileName.toString(), progressItems, scan, processedBytes),
@@ -227,7 +267,7 @@ class FileOperationEngine(
                     completedItems = completed,
                     failedItems = 1,
                     failures = listOf(
-                        operationFailure(request.sources.getOrNull(completed), error, cleanupFailure),
+                        operationFailure(request.sources.getOrNull(completed), request.type, error, cleanupFailure),
                     ),
                 ),
             )
@@ -306,6 +346,22 @@ class FileOperationEngine(
         processedBytes: Long,
     ) = OperationProgress(currentName, processedItems, scan.itemCount, processedBytes, scan.totalBytes)
 
+    private fun verifyPublishedTarget(source: Path, target: Path) {
+        val sourceIsDirectory = Files.isDirectory(source, NOFOLLOW_LINKS)
+        val targetIsDirectory = Files.isDirectory(target, NOFOLLOW_LINKS)
+        if (sourceIsDirectory != targetIsDirectory) {
+            throw IOException("published target type mismatch: source=$source target=$target")
+        }
+        if (!sourceIsDirectory) {
+            if (!Files.isRegularFile(source, NOFOLLOW_LINKS) || !Files.isRegularFile(target, NOFOLLOW_LINKS)) {
+                throw IOException("published target is not a regular file: $target")
+            }
+            if (Files.size(source) != Files.size(target)) {
+                throw IOException("published target size mismatch: source=$source target=$target")
+            }
+        }
+    }
+
     private fun copyDirectory(
         source: Path,
         staged: Path,
@@ -373,6 +429,7 @@ internal fun backupPath(target: Path, taskId: String): Path =
 
 private fun operationFailure(
     source: Path?,
+    type: FileOperationType,
     error: Exception,
     cleanupFailure: StagedCleanupFailure? = null,
 ): FileOperationFailure {
@@ -385,8 +442,8 @@ private fun operationFailure(
         error is FileSyncException -> "文件同步失败"
         error is FileAlreadyExistsException ||
             error is NoSuchFileException -> "目标发布失败"
-        error is UnsupportedSymbolicLinkException -> "暂不支持复制符号链接"
-        else -> "复制失败"
+        error is UnsupportedSymbolicLinkException -> "暂不支持操作符号链接"
+        else -> if (type == FileOperationType.COPY) "复制失败" else "移动失败"
     }
     val userMessage = if (cleanupFailure == null) baseUserMessage
     else "$baseUserMessage，任务临时文件清理失败"
@@ -436,6 +493,41 @@ private class NioFileByteCopier : FileByteCopier {
             }
         }
     }
+}
+
+private class NioFastMover : FastMover {
+    override fun move(source: Path, target: Path): Boolean {
+        val targetParent = target.parent ?: return false
+        if (Files.getFileStore(source) != Files.getFileStore(targetParent)) return false
+        Files.move(source, target)
+        return true
+    }
+}
+
+private class NioSourceDeleter : SourceDeleter {
+    override fun delete(source: Path) {
+        deleteRecursivelyNoFollow(source)
+    }
+}
+
+private fun deleteRecursivelyNoFollow(path: Path) {
+    if (!Files.exists(path, NOFOLLOW_LINKS)) return
+    if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+        Files.delete(path)
+        return
+    }
+    Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+        override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+            Files.delete(file)
+            return FileVisitResult.CONTINUE
+        }
+
+        override fun postVisitDirectory(dir: Path, error: IOException?): FileVisitResult {
+            if (error != null) throw error
+            Files.delete(dir)
+            return FileVisitResult.CONTINUE
+        }
+    })
 }
 
 private class NioFileSystemOperations : FileSystemOperations {
