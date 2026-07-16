@@ -49,6 +49,96 @@ class FileOperationEngineMoveTest {
         assertEquals(0, deleteCalls)
     }
 
+    @Test fun multipleFastMovesReportPerSourceItemsAndBytes() = runTest {
+        val root = temporaryFolder.newFolder("fast-progress").toPath()
+        val file = Files.write(root.resolve("file.txt"), byteArrayOf(1, 2, 3))
+        val directory = Files.createDirectories(root.resolve("directory/nested")).let { root.resolve("directory") }
+        Files.write(directory.resolve("nested/data.bin"), byteArrayOf(4, 5, 6, 7))
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val progress = mutableListOf<OperationProgress>()
+        val engine = engine(fastMover = FastMover { from, to -> Files.move(from, to); true })
+
+        val outcome = engine.execute(
+            FileOperationRequest("move-task", FileOperationType.MOVE, listOf(file, directory), targetDirectory),
+            ScanOutcome.Ready(itemCount = 4, totalBytes = 7),
+            OperationCancellation(),
+            progress::add,
+            { ReplacementDecision.REPLACE_ALL },
+        )
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(4, progress.last().processedItems)
+        assertEquals(7, progress.last().processedBytes)
+    }
+
+    @Test fun sameStoreReplacementUsesBackupTransactionWithoutFallbackDelete() = runTest {
+        val root = temporaryFolder.newFolder("fast-replacement").toPath()
+        val newBytes = "new".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), newBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), "old".toByteArray())
+        var fastMoves = 0
+        val engine = engine(
+            fastMover = FastMover { from, to -> fastMoves += 1; Files.move(from, to); true },
+            sourceDeleter = SourceDeleter { throw AssertionError("fallback delete must not run") },
+        )
+
+        val outcome = executeMove(source, targetDirectory, engine)
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(1, fastMoves)
+        assertFalse(Files.exists(source))
+        assertArrayEquals(newBytes, Files.readAllBytes(target))
+        assertFalse(Files.exists(backupPath(target, "move-task")))
+    }
+
+    @Test fun fastReplacementFailureRestoresOldTargetAndKeepsSource() = runTest {
+        val root = temporaryFolder.newFolder("fast-replacement-restore").toPath()
+        val newBytes = "new".toByteArray()
+        val oldBytes = "old".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), newBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldBytes)
+        val engine = engine(
+            fastMover = FastMover { _, _ -> throw IOException("forced fast publish failure") },
+            sourceDeleter = SourceDeleter { throw AssertionError("fallback delete must not run") },
+        )
+
+        val outcome = executeMove(source, targetDirectory, engine)
+
+        assertTrue(outcome is EngineOutcome.Failed)
+        assertArrayEquals(oldBytes, Files.readAllBytes(target))
+        assertArrayEquals(newBytes, Files.readAllBytes(source))
+        assertFalse(Files.exists(backupPath(target, "move-task")))
+    }
+
+    @Test fun fastReplacementBackupCleanupFailureKeepsNewTargetAndReportsPartial() = runTest {
+        val root = temporaryFolder.newFolder("fast-replacement-backup-cleanup").toPath()
+        val newBytes = "new".toByteArray()
+        val oldBytes = "old".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), newBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldBytes)
+        val backup = backupPath(target, "move-task")
+        val operations = object : TestFileSystemOperations() {
+            override fun delete(path: Path) {
+                if (path == backup) throw IOException("forced backup cleanup failure")
+                super.delete(path)
+            }
+        }
+        val engine = engine(
+            fileSystem = operations,
+            fastMover = FastMover { from, to -> Files.move(from, to); true },
+        )
+
+        val outcome = executeMove(source, targetDirectory, engine)
+
+        assertTrue(outcome is EngineOutcome.Partial)
+        assertFalse(Files.exists(source))
+        assertArrayEquals(newBytes, Files.readAllBytes(target))
+        assertArrayEquals(oldBytes, Files.readAllBytes(backup))
+    }
+
     @Test fun fallbackPublishesAndVerifiesTargetBeforeDeletingSource() = runTest {
         val root = temporaryFolder.newFolder("fallback-order").toPath()
         val bytes = "fallback".toByteArray()

@@ -118,19 +118,27 @@ class FileOperationEngine(
                     throw UnsupportedSymbolicLinkException(source)
                 }
                 val target = request.targetDirectory.resolve(source.fileName)
-                if (Files.exists(target, NOFOLLOW_LINKS)) approveReplacement(source, target)
-                if (request.type == FileOperationType.MOVE && !Files.exists(target, NOFOLLOW_LINKS)) {
-                    val moved = try {
-                        fastMover.move(source, target)
-                    } catch (error: FileAlreadyExistsException) {
-                        if (!Files.exists(target, NOFOLLOW_LINKS)) throw error
-                        approveReplacement(source, target)
-                        false
+                val targetExisted = Files.exists(target, NOFOLLOW_LINKS)
+                if (targetExisted) approveReplacement(source, target)
+                if (request.type == FileOperationType.MOVE) {
+                    val sourceProgress = measureSourceProgress(source, cancellation)
+                    cancellation.throwIfRequested()
+                    val moved = if (Files.exists(target, NOFOLLOW_LINKS)) {
+                        tryFastMoveReplacement(source, target, request.taskId)
+                    } else {
+                        try {
+                            fastMover.move(source, target)
+                        } catch (error: FileAlreadyExistsException) {
+                            if (!Files.exists(target, NOFOLLOW_LINKS)) throw error
+                            approveReplacement(source, target)
+                            cancellation.throwIfRequested()
+                            tryFastMoveReplacement(source, target, request.taskId)
+                        }
                     }
                     if (moved) {
                         completed += 1
-                        progressItems += 1
-                        processedBytes += scan.totalBytes ?: 0
+                        progressItems += sourceProgress.itemCount
+                        processedBytes += sourceProgress.totalBytes
                         onProgress(progress(source.fileName.toString(), progressItems, scan, processedBytes))
                         continue
                     }
@@ -315,6 +323,48 @@ class FileOperationEngine(
         }
     }
 
+    private fun tryFastMoveReplacement(source: Path, target: Path, taskId: String): Boolean {
+        val backup = backupPath(target, taskId)
+        if (Files.exists(backup, NOFOLLOW_LINKS)) throw FileAlreadyExistsException(backup.toString())
+        moveExistingTargetToBackup(target, backup)
+        val moved = try {
+            fastMover.move(source, target)
+        } catch (moveError: Exception) {
+            restoreAfterFastMoveFailure(backup, target, moveError)
+            throw moveError
+        }
+        if (!moved) {
+            val unavailable = IOException("same-file-store fast move unavailable")
+            restoreAfterFastMoveFailure(backup, target, unavailable)
+            return false
+        }
+        try {
+            deleteOwnedRecursively(backup)
+        } catch (error: CancellationException) {
+            error.addSuppressed(IOException("new target published; backup cleanup pending at $backup"))
+            throw error
+        } catch (error: Exception) {
+            throw PublishedWithBackupCleanupFailure(target, backup, error)
+        }
+        return true
+    }
+
+    private fun restoreAfterFastMoveFailure(backup: Path, target: Path, moveError: Exception) {
+        try {
+            restoreBackupToTarget(backup, target)
+        } catch (restoreError: Exception) {
+            if (restoreError is CancellationException) {
+                restoreError.addSuppressed(moveError)
+                throw restoreError
+            }
+            if (moveError is CancellationException) {
+                moveError.addSuppressed(restoreError)
+                throw moveError
+            }
+            throw PublishedWithBackupRestoreFailure(target, backup, moveError, restoreError)
+        }
+    }
+
     private fun moveExistingTargetToBackup(target: Path, backup: Path) {
         fileSystem.moveNoReplace(target, backup)
     }
@@ -360,6 +410,32 @@ class FileOperationEngine(
                 throw IOException("published target size mismatch: source=$source target=$target")
             }
         }
+    }
+
+    private fun measureSourceProgress(
+        source: Path,
+        cancellation: OperationCancellation,
+    ): SourceProgress {
+        var itemCount = 0
+        var totalBytes = 0L
+        Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                itemCount += 1
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                if (!attrs.isRegularFile || Files.isSymbolicLink(file)) {
+                    throw UnsupportedSymbolicLinkException(file)
+                }
+                itemCount += 1
+                totalBytes = Math.addExact(totalBytes, attrs.size())
+                return FileVisitResult.CONTINUE
+            }
+        })
+        return SourceProgress(itemCount, totalBytes)
     }
 
     private fun copyDirectory(
@@ -544,6 +620,8 @@ private class NioFileSystemOperations : FileSystemOperations {
 }
 
 private class FileSyncException(cause: Exception) : IOException(cause.message, cause)
+
+private data class SourceProgress(val itemCount: Int, val totalBytes: Long)
 
 private class UnsupportedSymbolicLinkException(val path: Path) :
     IOException("unsupported symbolic link: $path")
