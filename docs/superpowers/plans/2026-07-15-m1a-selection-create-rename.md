@@ -41,7 +41,7 @@
 - `app/src/main/java/com/example/watchfiles/data/DirectPathRepository.kt` — implement a small `DirectoryReader` interface for testable ViewModel injection.
 - `app/src/main/java/com/example/watchfiles/browser/FileBrowserViewModel.kt` — selection state, mutation state, create/rename orchestration.
 - `app/src/main/java/com/example/watchfiles/MainActivity.kt` — selection-mode UI, long-press item surface, name editor, and navigation.
-- `PROJECT_PLAN.md`, `PROJECT_CONTEXT.md`, `README.md`, `TESTING.md` — update only after Debug and real-device acceptance.
+- `docs/superpowers/roadmap/PROJECT_PLAN.md`, `docs/superpowers/context/PROJECT_CONTEXT.md`, `README.md`, `docs/superpowers/checkpoints/TESTING.md` — update only after Debug and real-device acceptance.
 
 ---
 
@@ -1096,10 +1096,10 @@ Checkpoint files: `MainDispatcherRule.kt`, `FileBrowserViewModelTest.kt`, `FileB
 
 **Files:**
 
-- Modify after acceptance: `PROJECT_PLAN.md`
-- Modify after acceptance: `PROJECT_CONTEXT.md`
+- Modify after acceptance: `docs/superpowers/roadmap/PROJECT_PLAN.md`
+- Modify after acceptance: `docs/superpowers/context/PROJECT_CONTEXT.md`
 - Modify after acceptance: `README.md`
-- Modify after acceptance: `TESTING.md`
+- Modify after acceptance: `docs/superpowers/checkpoints/TESTING.md`
 
 **Interfaces:**
 
@@ -1170,10 +1170,10 @@ Expected: `新文件夹` and `renamed.txt` exist, `original.txt` does not, no un
 
 Apply these exact status changes:
 
-- `PROJECT_PLAN.md`: mark “长按多选”, “新建文件夹”, and “重命名” complete; leave copy, move, delete, conflicts, queue, `.part`, and error handling incomplete.
-- `PROJECT_CONTEXT.md`: add an M1A section documenting architecture, test sandbox, keyboard result, and real-device acceptance.
+- `docs/superpowers/roadmap/PROJECT_PLAN.md`: mark “长按多选”, “新建文件夹”, and “重命名” complete; leave later-stage items incomplete until their own checkpoints.
+- `docs/superpowers/context/PROJECT_CONTEXT.md`: add an M1A section documenting architecture, test sandbox, keyboard result, and real-device acceptance.
 - `README.md`: add the three M1A capabilities and retain the warning that copy/move/delete are not yet available.
-- `TESTING.md`: add repeatable M1A steps and keep all destructive tests scoped to `M1Sandbox`.
+- `docs/superpowers/checkpoints/TESTING.md`: add repeatable M1A steps and keep all destructive tests scoped to `M1Sandbox`.
 
 - [ ] **Step 7: Re-run the final verification after documentation edits**
 
@@ -1186,4 +1186,4 @@ Get-FileHash "app\build\outputs\apk\debug\app-debug.apk" -Algorithm SHA256
 
 Expected: tests and lint still pass, Debug APK exists, and a SHA-256 hash is recorded in the handoff. Do not copy the APK into `releases`.
 
-Final checkpoint files: all M1A source/tests plus `PROJECT_PLAN.md`, `PROJECT_CONTEXT.md`, `README.md`, and `TESTING.md`.
+Final checkpoint files: all M1A source/tests plus the canonical roadmap, context, README entry, and testing checklist under `docs/superpowers/`.

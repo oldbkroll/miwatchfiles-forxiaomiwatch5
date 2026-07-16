@@ -873,15 +873,15 @@ git commit -m "feat: add round-screen copy workflow"
 
 **Files:**
 
-- Modify after acceptance: `PROJECT_CONTEXT.md`
-- Modify after acceptance: `PROJECT_PLAN.md`
+- Modify after acceptance: `docs/superpowers/context/PROJECT_CONTEXT.md`
+- Modify after acceptance: `docs/superpowers/roadmap/PROJECT_PLAN.md`
 - Modify after acceptance: `README.md`
-- Modify after acceptance: `TESTING.md`
+- Modify after acceptance: `docs/superpowers/checkpoints/TESTING.md`
 
 **Interfaces:**
 
 - Consumes the complete safe-copy Debug build.
-- Produces a documented, committed Checkpoint 1 and keeps M1 “复制与移动” unchecked until Checkpoint 2.
+- Produces a documented, committed Checkpoint 1 while keeping the M1B COPY/MOVE status explicit until Checkpoint 2 closes.
 
 - [ ] **Step 1: Discover exactly one current watch transport**
 
@@ -919,14 +919,14 @@ Compare source hashes to the pre-test hashes. Confirm successful targets match, 
 
 - [ ] **Step 6: Update Checkpoint 1 documentation**
 
-Document safe copy, the exact sandbox results, test counts, Debug APK hash, and any device observations. Keep `PROJECT_PLAN.md` “复制与移动” unchecked and state that move is still unavailable. Do not copy an APK into `releases`.
+Document safe copy, the exact sandbox results, test counts, Debug APK hash, and any device observations. Keep the canonical roadmap and checkpoint paths under `docs/superpowers/`; do not copy an APK into `releases`.
 
 - [ ] **Step 7: Re-run verification and commit**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon --console=plain
 Get-FileHash app\build\outputs\apk\debug\app-debug.apk -Algorithm SHA256
-git add PROJECT_CONTEXT.md PROJECT_PLAN.md README.md TESTING.md
+git add docs/superpowers/context/PROJECT_CONTEXT.md docs/superpowers/roadmap/PROJECT_PLAN.md README.md docs/superpowers/checkpoints/TESTING.md docs/superpowers/checkpoints/2026-07-16-m1b-closeout.md
 git commit -m "docs: record M1B safe copy acceptance"
 ```
 
@@ -1084,10 +1084,10 @@ git commit -m "feat: add round-screen safe move workflow"
 
 **Files:**
 
-- Modify: `PROJECT_CONTEXT.md`
-- Modify: `PROJECT_PLAN.md`
+- Modify: `docs/superpowers/context/PROJECT_CONTEXT.md`
+- Modify: `docs/superpowers/roadmap/PROJECT_PLAN.md`
 - Modify: `README.md`
-- Modify: `TESTING.md`
+- Modify: `docs/superpowers/checkpoints/TESTING.md`
 
 **Interfaces:**
 
@@ -1112,10 +1112,10 @@ Confirm moved target bytes/hashes, expected source removal only after success, i
 
 - [ ] **Step 5: Update documentation**
 
-- Mark `PROJECT_PLAN.md` “复制与移动”, “同名冲突处理”, “单任务操作队列”, `.part` cleanup, and implemented error prompts complete only if their exact acceptance checks passed.
-- Record Checkpoint 1 and 2 test evidence in `PROJECT_CONTEXT.md`.
+- Mark the canonical roadmap “复制与移动”, “同名冲突处理”, “单任务操作队列”, `.part` cleanup, and implemented error prompts complete only if their exact acceptance checks passed.
+- Record Checkpoint 1 and 2 test evidence in the canonical context and checkpoint files.
 - Update `README.md` capabilities and retain that permanent delete is unavailable.
-- Expand `TESTING.md` with repeatable copy/move, replace-all, cancellation, and safety checks.
+- Expand the canonical testing checklist with repeatable copy/move, replace-all, cancellation, and safety checks.
 - Keep versionCode 6/versionName `0.3.1-dev-debug`; do not build Release or update `releases` until all of M1, including M1C, is complete.
 
 - [ ] **Step 6: Run the final evidence gate**
@@ -1135,7 +1135,7 @@ Expected: zero test failures/errors, zero lint issue nodes, Debug APK hash recor
 - [ ] **Step 7: Commit the M1B handoff**
 
 ```powershell
-git add PROJECT_CONTEXT.md PROJECT_PLAN.md README.md TESTING.md
+git add docs/superpowers/context/PROJECT_CONTEXT.md docs/superpowers/roadmap/PROJECT_PLAN.md README.md docs/superpowers/checkpoints/TESTING.md docs/superpowers/checkpoints/2026-07-16-m1b-closeout.md docs/superpowers/workflow/personal-project-simplified-workflow.md docs/superpowers/README.md
 git commit -m "docs: record M1B copy and move acceptance"
 git status --short --branch
 ```

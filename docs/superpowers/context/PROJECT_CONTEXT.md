@@ -1,7 +1,7 @@
 # WatchFiles 项目交接上下文
 
-更新日期：2026-07-15  
-当前阶段：M0 与图片查看增量已完成；M1A 基础文件操作已完成
+更新日期：2026-07-16
+当前阶段：M0、图片查看增量、M1A 和 M1B 已完成；下一阶段为 M1C 删除确认
 
 ## 项目目标
 
@@ -101,7 +101,9 @@
 
 小米 Watch 5 真机已在 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` 验证长按多选、返回退出选择、新建文件夹和重命名；搜狗手表输入法可正常弹出并通过 Done 提交。测试目录中的 `original.txt` 已成功重命名为 `renamed.txt`。把它再次重命名为已存在的 `NewFolderl` 时，编辑页显示“已存在同名项目”，文件和文件夹均保持不变，文件内容未损坏且应用未崩溃。
 
-复制、移动和删除仍不可用。下一步为 M1B：单任务队列、复制/移动、同名冲突决策和 `.part` 失败清理；删除留到 M1C，并要求二次确认。
+M1B 已实现单任务队列、安全复制与移动、同名冲突决策、取消清理和错误结果处理；删除仍不可用，下一步为 M1C 删除确认，并要求二次确认。
+
+M1B 的代码、自动化验证和小米 Watch 5 真机验收结论见 [`2026-07-16-m1b-closeout.md`](../checkpoints/2026-07-16-m1b-closeout.md)。
 
 ## 阶段二首个增量
 
@@ -239,7 +241,7 @@ adb logcat -d AndroidRuntime:E *:S
 
 ## 下一步建议
 
-继续 M1B 基础文件操作：先实现单任务队列和安全复制，再实现移动、冲突决策与 `.part` 失败清理。所有写操作继续限定在 `Download/WatchFilesTest/M1Sandbox` 真机验收。删除功能最后加入，并要求二次确认。
+开始 M1C 删除确认设计与实现。所有写操作继续限定在 `Download/WatchFilesTest/M1Sandbox` 真机验收；删除必须先做失败测试，再提供二次确认、取消和失败恢复路径。
 
 ## 开发约束
 
@@ -253,11 +255,12 @@ adb logcat -d AndroidRuntime:E *:S
 
 ## 新任务启动说明
 
-新 Codex 项目任务开始时，应先完整阅读：
+每个开发阶段使用一个独立会话。新会话开始时按以下顺序阅读：
 
-1. `PROJECT_CONTEXT.md`
-2. `PROJECT_PLAN.md`
-3. `README.md`
-4. `TESTING.md`
+1. 根目录 `README.md`
+2. `docs/superpowers/context/PROJECT_CONTEXT.md`
+3. `docs/superpowers/roadmap/PROJECT_PLAN.md`
+4. `docs/superpowers/checkpoints/TESTING.md`
+5. 当前阶段的 spec、plan 和 checkpoint
 
-然后检查工作树和构建状态，从 M1B 继续，不要重新初始化 Android 项目，也不要撤销 target 29 和自定义表冠兼容逻辑。
+然后检查工作树和构建状态，从当前阶段 checkpoint 继续，不要重新初始化 Android 项目，也不要撤销 target 29 和自定义表冠兼容逻辑。个人小项目简化流程见 [`personal-project-simplified-workflow.md`](../workflow/personal-project-simplified-workflow.md)。
