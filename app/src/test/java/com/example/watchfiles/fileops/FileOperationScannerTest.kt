@@ -37,6 +37,19 @@ class FileOperationScannerTest {
         assertEquals("目标目录不能位于源文件夹内部", (outcome as ScanOutcome.Rejected).failure.userMessage)
     }
 
+    @Test fun rejectsTargetInsideFilesystemRootSource() = runTest {
+        val target = temporaryFolder.newFolder("root-target").toPath().toAbsolutePath()
+        val source = requireNotNull(target.root)
+
+        val outcome = FileOperationScanner().scan(
+            FileOperationRequest("task-root", FileOperationType.COPY, listOf(source), target),
+            OperationCancellation(),
+        )
+
+        assertTrue(outcome is ScanOutcome.Rejected)
+        assertEquals("目标目录不能位于源文件夹内部", (outcome as ScanOutcome.Rejected).failure.userMessage)
+    }
+
     @Test fun rejectsObviouslyInsufficientSpace() = runTest {
         val source = temporaryFolder.newFile("large.bin").toPath()
         Files.write(source, byteArrayOf(1, 2, 3))

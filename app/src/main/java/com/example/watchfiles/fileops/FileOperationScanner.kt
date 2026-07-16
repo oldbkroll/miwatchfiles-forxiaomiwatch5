@@ -47,7 +47,8 @@ class FileOperationScanner(
             cancellation.throwIfRequested()
             if (!Files.exists(source, NOFOLLOW_LINKS)) return reject(source, "源项目已不存在")
             if (!Files.isReadable(source)) return reject(source, "源项目不可读")
-            if (target.resolve(source.fileName).normalize() == source) {
+            val sourceName = source.fileName
+            if (sourceName != null && target.resolve(sourceName).normalize() == source) {
                 return reject(target, "目标与源项目相同")
             }
             if (Files.isDirectory(source, NOFOLLOW_LINKS) && target.startsWith(source)) {
@@ -78,6 +79,7 @@ class FileOperationScanner(
                     }
 
                     override fun visitFileFailed(file: Path, error: IOException): FileVisitResult {
+                        cancellation.throwIfRequested()
                         itemCount += 1
                         allSizesKnown = false
                         return FileVisitResult.CONTINUE
