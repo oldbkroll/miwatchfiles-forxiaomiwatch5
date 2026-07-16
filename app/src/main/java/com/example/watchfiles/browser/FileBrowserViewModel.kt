@@ -162,4 +162,9 @@ class FileBrowserViewModel(
     }
 
     fun refresh() = open(_state.value.currentPath)
+
+    fun refreshAfterOperation() {
+        clearSelection()
+        open(_state.value.currentPath)
+    }
 }

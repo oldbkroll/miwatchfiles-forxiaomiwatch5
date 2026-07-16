@@ -1,6 +1,7 @@
 package com.example.watchfiles.browser
 
 import com.example.watchfiles.data.DirectoryReader
+import com.example.watchfiles.data.FileEntry
 import com.example.watchfiles.fileops.FileMutationGateway
 import com.example.watchfiles.fileops.FileMutationResult
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -49,6 +50,24 @@ class FileBrowserViewModelTest {
             viewModel.state.value.mutation,
         )
     }
+
+    @Test
+    fun refreshAfterOperationReloadsEntriesAndClearsSelection() = runTest {
+        var entries = listOf(fileEntry(root.resolve("old.txt")))
+        val viewModel = FileBrowserViewModel(DirectoryReader { entries }, FakeMutationGateway(), root)
+        viewModel.open(root)
+        advanceUntilIdle()
+        viewModel.beginSelection(entries.single().path)
+        entries = listOf(fileEntry(root.resolve("copied.txt")))
+
+        viewModel.refreshAfterOperation()
+        advanceUntilIdle()
+
+        assertEquals(entries, viewModel.state.value.entries)
+        assertTrue(viewModel.state.value.selection.selectedPaths.isEmpty())
+    }
+
+    private fun fileEntry(path: Path) = FileEntry(path, path.fileName.toString(), false, 1, null, false, true, true)
 
     private class FakeMutationGateway(
         private val createResult: FileMutationResult = FileMutationResult.Failure("unused"),

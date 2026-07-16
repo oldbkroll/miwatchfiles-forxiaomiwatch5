@@ -4,11 +4,15 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +83,7 @@ class FileOperationEngine(
         var processedBytes = 0L
         var replaceAll = false
         var staged: Path? = null
+        var progressItems = 0
         return try {
             if (request.type != FileOperationType.COPY) {
                 return EngineOutcome.Failed(
@@ -104,58 +109,41 @@ class FileOperationEngine(
                     throw NoSuchFileException(source.toString())
                 }
                 if (Files.isDirectory(source, NOFOLLOW_LINKS)) {
-                    return EngineOutcome.Failed(
-                        FileOperationResult(
-                            completedItems = completed,
-                            failedItems = 1,
-                            failures = listOf(FileOperationFailure(source, "文件夹复制尚未启用")),
-                        ),
-                    )
-                }
-                if (!Files.isRegularFile(source, NOFOLLOW_LINKS)) {
-                    return EngineOutcome.Failed(
-                        FileOperationResult(
-                            completedItems = completed,
-                            failedItems = 1,
-                            failures = listOf(FileOperationFailure(source, "仅支持普通文件复制")),
-                        ),
-                    )
+                    // handled below through private top-level directory staging
+                } else if (!Files.isRegularFile(source, NOFOLLOW_LINKS)) {
+                    throw UnsupportedSymbolicLinkException(source)
                 }
                 val target = request.targetDirectory.resolve(source.fileName)
-                if (Files.exists(target, NOFOLLOW_LINKS)) {
-                    if (!Files.isRegularFile(target, NOFOLLOW_LINKS)) {
-                        return EngineOutcome.Failed(
-                            FileOperationResult(
-                                completedItems = completed,
-                                failedItems = 1,
-                                failures = listOf(
-                                    FileOperationFailure(target, "当前仅支持替换普通文件"),
-                                ),
-                            ),
-                        )
-                    }
-                    approveReplacement(source, target)
-                }
-                staged = temporaryFile(target, request.taskId)
-                Files.newOutputStream(staged, StandardOpenOption.CREATE_NEW).close()
-                byteCopier.copy(source, staged, cancellation) { count ->
-                    processedBytes += count
-                    onProgress(
-                        OperationProgress(
-                            currentName = source.fileName.toString(),
-                            processedItems = completed,
-                            totalItems = scan.itemCount,
-                            processedBytes = processedBytes,
-                            totalBytes = scan.totalBytes,
-                        ),
+                if (Files.exists(target, NOFOLLOW_LINKS)) approveReplacement(source, target)
+                if (Files.isDirectory(source, NOFOLLOW_LINKS)) {
+                    val directoryStage = temporaryDirectory(target, request.taskId)
+                    staged = directoryStage
+                    copyDirectory(
+                        source = source,
+                        staged = directoryStage,
+                        cancellation = cancellation,
+                        onEntry = { name ->
+                            progressItems += 1
+                            onProgress(progress(name, progressItems, scan, processedBytes))
+                        },
+                        onBytes = { name, count ->
+                            processedBytes += count
+                            onProgress(progress(name, progressItems, scan, processedBytes))
+                        },
                     )
+                } else {
+                    val fileStage = temporaryFile(target, request.taskId)
+                    staged = fileStage
+                    Files.newOutputStream(fileStage, StandardOpenOption.CREATE_NEW).close()
+                    byteCopier.copy(source, fileStage, cancellation) { count ->
+                        processedBytes += count
+                        onProgress(progress(source.fileName.toString(), progressItems, scan, processedBytes))
+                    }
+                    progressItems += 1
                 }
                 cancellation.throwIfRequested()
                 while (true) {
                     if (Files.exists(target, NOFOLLOW_LINKS)) {
-                        if (!Files.isRegularFile(target, NOFOLLOW_LINKS)) {
-                            throw UnsupportedReplacementTargetException(target)
-                        }
                         approveReplacement(source, target)
                         publishReplacement(staged, target, request.taskId)
                         break
@@ -171,13 +159,7 @@ class FileOperationEngine(
                 staged = null
                 completed += 1
                 onProgress(
-                    OperationProgress(
-                        currentName = source.fileName.toString(),
-                        processedItems = completed,
-                        totalItems = scan.itemCount,
-                        processedBytes = processedBytes,
-                        totalBytes = scan.totalBytes,
-                    ),
+                    progress(source.fileName.toString(), progressItems, scan, processedBytes),
                 )
             }
             EngineOutcome.Completed(FileOperationResult(completed, 0))
@@ -257,9 +239,6 @@ class FileOperationEngine(
         if (Files.exists(backup, NOFOLLOW_LINKS)) throw FileAlreadyExistsException(backup.toString())
         moveExistingTargetToBackup(target, backup)
         try {
-            if (!Files.isRegularFile(backup, NOFOLLOW_LINKS)) {
-                throw UnsupportedReplacementTargetException(target)
-            }
             publishStagedOverBackedUpTarget(staged, target)
         } catch (publishError: Exception) {
             try {
@@ -283,7 +262,7 @@ class FileOperationEngine(
             throw publishError
         }
         try {
-            fileSystem.delete(backup)
+            deleteOwnedRecursively(backup)
         } catch (error: CancellationException) {
             error.addSuppressed(IOException("new target published; backup cleanup pending at $backup"))
             throw error
@@ -307,7 +286,7 @@ class FileOperationEngine(
     private fun cleanupStaged(staged: Path?): StagedCleanupFailure? {
         if (staged == null) return null
         return try {
-            fileSystem.delete(staged)
+            deleteOwnedRecursively(staged)
             null
         } catch (error: CancellationException) {
             throw error
@@ -315,10 +294,76 @@ class FileOperationEngine(
             StagedCleanupFailure(staged, error)
         }
     }
+
+    private fun progress(
+        currentName: String,
+        processedItems: Int,
+        scan: ScanOutcome.Ready,
+        processedBytes: Long,
+    ) = OperationProgress(currentName, processedItems, scan.itemCount, processedBytes, scan.totalBytes)
+
+    private fun copyDirectory(
+        source: Path,
+        staged: Path,
+        cancellation: OperationCancellation,
+        onEntry: (String) -> Unit,
+        onBytes: (String, Long) -> Unit,
+    ) {
+        Files.createDirectory(staged)
+        cancellation.throwIfRequested()
+        onEntry(source.fileName?.toString().orEmpty())
+        Files.walkFileTree(source, object : SimpleFileVisitor<Path>() {
+            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                if (dir != source) {
+                    Files.createDirectory(staged.resolve(source.relativize(dir)))
+                    onEntry(dir.fileName?.toString().orEmpty())
+                }
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                cancellation.throwIfRequested()
+                if (!attrs.isRegularFile || Files.isSymbolicLink(file)) {
+                    throw UnsupportedSymbolicLinkException(file)
+                }
+                val nestedTarget = staged.resolve(source.relativize(file))
+                Files.newOutputStream(nestedTarget, StandardOpenOption.CREATE_NEW).close()
+                val name = file.fileName?.toString().orEmpty()
+                byteCopier.copy(file, nestedTarget, cancellation) { count -> onBytes(name, count) }
+                cancellation.throwIfRequested()
+                onEntry(name)
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
+
+    private fun deleteOwnedRecursively(path: Path) {
+        if (!Files.exists(path, NOFOLLOW_LINKS)) return
+        if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+            fileSystem.delete(path)
+            return
+        }
+        Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                fileSystem.delete(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(dir: Path, error: IOException?): FileVisitResult {
+                if (error != null) throw error
+                fileSystem.delete(dir)
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
 }
 
 internal fun temporaryFile(target: Path, taskId: String): Path =
     target.resolveSibling(".${target.fileName}.watchfiles-$taskId.part")
+
+internal fun temporaryDirectory(target: Path, taskId: String): Path =
+    target.resolveSibling(".${target.fileName}.watchfiles-$taskId.part-dir")
 
 internal fun backupPath(target: Path, taskId: String): Path =
     target.resolveSibling(".${target.fileName}.watchfiles-$taskId.backup")
@@ -337,7 +382,7 @@ private fun operationFailure(
         error is FileSyncException -> "文件同步失败"
         error is FileAlreadyExistsException ||
             error is NoSuchFileException -> "目标发布失败"
-        error is UnsupportedReplacementTargetException -> "当前仅支持替换普通文件"
+        error is UnsupportedSymbolicLinkException -> "暂不支持复制符号链接"
         else -> "复制失败"
     }
     val userMessage = if (cleanupFailure == null) baseUserMessage
@@ -358,7 +403,7 @@ private fun operationFailure(
 
 private fun NoSuchFileException.refersTo(source: Path?): Boolean {
     if (source == null) return false
-    val missing = runCatching { Path.of(file) }.getOrNull() ?: return false
+    val missing = runCatching { Paths.get(file) }.getOrNull() ?: return false
     return missing.toAbsolutePath().normalize() == source.toAbsolutePath().normalize()
 }
 
@@ -402,8 +447,8 @@ private class NioFileSystemOperations : FileSystemOperations {
 
 private class FileSyncException(cause: Exception) : IOException(cause.message, cause)
 
-private class UnsupportedReplacementTargetException(val target: Path) :
-    IOException("unsupported replacement target: $target")
+private class UnsupportedSymbolicLinkException(val path: Path) :
+    IOException("unsupported symbolic link: $path")
 
 private class StagedCleanupFailure(
     val path: Path,

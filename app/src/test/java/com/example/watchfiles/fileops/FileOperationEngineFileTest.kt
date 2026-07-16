@@ -158,7 +158,7 @@ class FileOperationEngineFileTest {
     }
 
     @Test
-    fun directoryIsRejectedUntilRecursiveCopyIsEnabled() = runTest {
+    fun directoryIsCopiedRecursively() = runTest {
         val root = temporaryFolder.newFolder("reject-directory").toPath()
         val source = Files.createDirectory(root.resolve("source"))
         Files.write(source.resolve("nested.txt"), byteArrayOf(1))
@@ -166,8 +166,8 @@ class FileOperationEngineFileTest {
 
         val outcome = executeCopy(source, targetDirectory)
 
-        assertEquals("文件夹复制尚未启用", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
-        assertFalse(Files.exists(targetDirectory.resolve("source")))
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertArrayEquals(byteArrayOf(1), Files.readAllBytes(targetDirectory.resolve("source/nested.txt")))
     }
 
     @Test
@@ -403,7 +403,7 @@ class FileOperationEngineFileTest {
     }
 
     @Test
-    fun ordinaryFileCannotReplaceExistingDirectory() = runTest {
+    fun ordinaryFileReplacesExistingDirectoryAsAWhole() = runTest {
         val root = temporaryFolder.newFolder("reject-directory-target").toPath()
         val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
         val targetDirectory = Files.createDirectory(root.resolve("target"))
@@ -416,11 +416,11 @@ class FileOperationEngineFileTest {
             ReplacementDecision.REPLACE_ALL
         }
 
-        val failure = (outcome as EngineOutcome.Failed).result.failures.single()
-        assertEquals("当前仅支持替换普通文件", failure.userMessage)
-        assertEquals(0, conflictCalls)
-        assertTrue(Files.isDirectory(existingDirectory))
-        assertArrayEquals("keep".toByteArray(), Files.readAllBytes(nested))
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(1, conflictCalls)
+        assertTrue(Files.isRegularFile(existingDirectory))
+        assertArrayEquals("source".toByteArray(), Files.readAllBytes(existingDirectory))
+        assertFalse(Files.exists(nested))
     }
 
     @Test
