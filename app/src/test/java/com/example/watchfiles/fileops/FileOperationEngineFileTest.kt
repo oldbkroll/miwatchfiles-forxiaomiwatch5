@@ -2,13 +2,20 @@ package com.example.watchfiles.fileops
 
 import java.io.IOException
 import java.nio.file.AccessDeniedException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeNoException
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -111,14 +118,367 @@ class FileOperationEngineFileTest {
         assertEquals("可用空间不足", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
     }
 
+    @Test
+    fun targetCreatedDuringCopyRequiresConflictDecision() = runTest {
+        val root = temporaryFolder.newFolder("late-conflict").toPath()
+        val sourceBytes = "source".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        val lateTargetBytes = "late-target".toByteArray()
+        val copier = FileByteCopier { sourcePath, temporaryTarget, _, onBytes ->
+            Files.copy(sourcePath, temporaryTarget, REPLACE_EXISTING)
+            Files.write(target, lateTargetBytes)
+            onBytes(sourceBytes.size.toLong())
+        }
+        var conflictCalls = 0
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(byteCopier = copier)) {
+            conflictCalls += 1
+            ReplacementDecision.CANCEL
+        }
+
+        assertTrue(outcome is EngineOutcome.Cancelled)
+        assertEquals(1, conflictCalls)
+        assertArrayEquals(lateTargetBytes, Files.readAllBytes(target))
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
+        assertFalse(Files.exists(temporaryFile(target, "task-1")))
+    }
+
+    @Test
+    fun moveRequestIsRejectedWithoutCopying() = runTest {
+        val root = temporaryFolder.newFolder("reject-move").toPath()
+        val sourceBytes = "move-source".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+
+        val outcome = executeCopy(source, targetDirectory, type = FileOperationType.MOVE)
+
+        assertEquals("当前仅支持复制文件", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
+        assertFalse(Files.exists(targetDirectory.resolve("source.txt")))
+    }
+
+    @Test
+    fun directoryIsRejectedUntilRecursiveCopyIsEnabled() = runTest {
+        val root = temporaryFolder.newFolder("reject-directory").toPath()
+        val source = Files.createDirectory(root.resolve("source"))
+        Files.write(source.resolve("nested.txt"), byteArrayOf(1))
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+
+        val outcome = executeCopy(source, targetDirectory)
+
+        assertEquals("文件夹复制尚未启用", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
+        assertFalse(Files.exists(targetDirectory.resolve("source")))
+    }
+
+    @Test
+    fun symbolicLinkIsRejectedWithoutFollowingIt() = runTest {
+        val root = temporaryFolder.newFolder("reject-symbolic-link").toPath()
+        val originalBytes = "linked-source".toByteArray()
+        val original = Files.write(root.resolve("original.txt"), originalBytes)
+        val source = try {
+            Files.createSymbolicLink(root.resolve("source-link.txt"), original)
+        } catch (error: Exception) {
+            assumeNoException(error)
+            error("symbolic link assumption should abort the test")
+        }
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+
+        val outcome = executeCopy(source, targetDirectory)
+
+        assertEquals("仅支持普通文件复制", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
+        assertArrayEquals(originalBytes, Files.readAllBytes(original))
+        assertFalse(Files.exists(targetDirectory.resolve("source-link.txt")))
+    }
+
+    @Test
+    fun externalCoroutineCancellationIsRethrown() = runTest {
+        val root = temporaryFolder.newFolder("external-cancellation").toPath()
+        val source = Files.write(root.resolve("source.txt"), byteArrayOf(1))
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val expected = CancellationException("external cancellation")
+        val copier = FileByteCopier { _, _, _, _ -> throw expected }
+
+        val actual = try {
+            executeCopy(source, targetDirectory, FileOperationEngine(byteCopier = copier))
+            null
+        } catch (error: CancellationException) {
+            error
+        }
+
+        assertEquals(expected.message, actual?.message)
+        assertFalse(Files.exists(temporaryFile(targetDirectory.resolve("source.txt"), "task-1")))
+    }
+
+    @Test
+    fun replacesExistingTargetAfterApproval() = runTest {
+        val root = temporaryFolder.newFolder("replace-existing").toPath()
+        val sourceBytes = "new-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), "old-target".toByteArray())
+        var conflictCalls = 0
+
+        val outcome = executeCopy(source, targetDirectory) {
+            conflictCalls += 1
+            ReplacementDecision.REPLACE_ALL
+        }
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(1, conflictCalls)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(target))
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
+        assertFalse(Files.exists(backupPath(target, "task-1")))
+    }
+
+    @Test
+    fun existingTargetCancelLeavesBothFilesUnchanged() = runTest {
+        val root = temporaryFolder.newFolder("cancel-existing").toPath()
+        val sourceBytes = "source".toByteArray()
+        val oldTargetBytes = "old-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldTargetBytes)
+
+        val outcome = executeCopy(source, targetDirectory) { ReplacementDecision.CANCEL }
+
+        assertTrue(outcome is EngineOutcome.Cancelled)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(source))
+        assertArrayEquals(oldTargetBytes, Files.readAllBytes(target))
+        assertFalse(Files.exists(temporaryFile(target, "task-1")))
+    }
+
+    @Test
+    fun backupCleanupFailureReturnsPartialWithPublishedTarget() = runTest {
+        val root = temporaryFolder.newFolder("backup-cleanup-failure").toPath()
+        val sourceBytes = "new-target".toByteArray()
+        val oldTargetBytes = "old-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldTargetBytes)
+        val backup = backupPath(target, "task-1")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun delete(path: Path) {
+                if (path == backup) throw IOException("forced backup cleanup failure")
+                super.delete(path)
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        val failure = (outcome as EngineOutcome.Partial).result.failures.single()
+        assertEquals("新目标已完成，但旧目标备份清理失败", failure.userMessage)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(target))
+        assertArrayEquals(oldTargetBytes, Files.readAllBytes(backup))
+    }
+
+    @Test
+    fun publishFailureRestoresOldTarget() = runTest {
+        val root = temporaryFolder.newFolder("publish-failure-restore").toPath()
+        val oldTargetBytes = "old-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), "new-target".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldTargetBytes)
+        val staged = temporaryFile(target, "task-1")
+        val backup = backupPath(target, "task-1")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                if (sourcePath == staged && targetPath == target) throw IOException("forced publish failure")
+                super.move(sourcePath, targetPath, atomic)
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        assertTrue(outcome is EngineOutcome.Failed)
+        assertArrayEquals(oldTargetBytes, Files.readAllBytes(target))
+        assertFalse(Files.exists(backup))
+        assertFalse(Files.exists(staged))
+    }
+
+    @Test
+    fun publishAndRestoreFailureReturnsPartialWithBackupLocation() = runTest {
+        val root = temporaryFolder.newFolder("publish-restore-failure").toPath()
+        val oldTargetBytes = "old-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), "new-target".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldTargetBytes)
+        val staged = temporaryFile(target, "task-1")
+        val backup = backupPath(target, "task-1")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                when {
+                    sourcePath == staged && targetPath == target -> throw IOException("forced publish failure")
+                    sourcePath == backup && targetPath == target -> throw IOException("forced restore failure")
+                    else -> super.move(sourcePath, targetPath, atomic)
+                }
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        val failure = (outcome as EngineOutcome.Partial).result.failures.single()
+        assertEquals("目标发布失败，旧目标保留在备份", failure.userMessage)
+        assertTrue(failure.technicalMessage.orEmpty().contains(backup.toString()))
+        assertTrue(failure.technicalMessage.orEmpty().contains("forced restore failure"))
+        assertFalse(Files.exists(target))
+        assertArrayEquals(oldTargetBytes, Files.readAllBytes(backup))
+        assertFalse(Files.exists(staged))
+    }
+
+    @Test
+    fun coroutineCancellationDuringRestoreIsRethrown() = runTest {
+        val root = temporaryFolder.newFolder("restore-cancellation").toPath()
+        val oldTargetBytes = "old-target".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), "new-target".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = Files.write(targetDirectory.resolve("source.txt"), oldTargetBytes)
+        val staged = temporaryFile(target, "task-1")
+        val backup = backupPath(target, "task-1")
+        val expected = CancellationException("restore cancelled")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                when {
+                    sourcePath == staged && targetPath == target -> throw IOException("forced publish failure")
+                    sourcePath == backup && targetPath == target -> throw expected
+                    else -> super.move(sourcePath, targetPath, atomic)
+                }
+            }
+        }
+
+        val actual = try {
+            executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+            null
+        } catch (error: CancellationException) {
+            error
+        }
+
+        assertEquals(expected.message, actual?.message)
+        assertFalse(Files.exists(target))
+        assertArrayEquals(oldTargetBytes, Files.readAllBytes(backup))
+        assertFalse(Files.exists(staged))
+    }
+
+    @Test
+    fun atomicMoveUnsupportedFallsBackToNonAtomicMove() = runTest {
+        val root = temporaryFolder.newFolder("atomic-fallback").toPath()
+        val sourceBytes = "source".toByteArray()
+        val source = Files.write(root.resolve("source.txt"), sourceBytes)
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        var atomicAttempts = 0
+        var fallbackAttempts = 0
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                if (atomic) {
+                    atomicAttempts += 1
+                    throw AtomicMoveNotSupportedException(sourcePath.toString(), targetPath.toString(), "forced")
+                }
+                fallbackAttempts += 1
+                super.move(sourcePath, targetPath, false)
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        assertTrue(outcome is EngineOutcome.Completed)
+        assertEquals(1, atomicAttempts)
+        assertEquals(1, fallbackAttempts)
+        assertArrayEquals(sourceBytes, Files.readAllBytes(targetDirectory.resolve("source.txt")))
+    }
+
+    @Test
+    fun fileAlreadyExistsDuringPublishUsesConflictDecision() = runTest {
+        val root = temporaryFolder.newFolder("publish-race").toPath()
+        val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        val lateTargetBytes = "late-target".toByteArray()
+        val staged = temporaryFile(target, "task-1")
+        val operations = object : DelegatingFileSystemOperations() {
+            var injected = false
+
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                if (!injected && sourcePath == staged && targetPath == target) {
+                    injected = true
+                    Files.write(target, lateTargetBytes)
+                    throw FileAlreadyExistsException(target.toString())
+                }
+                super.move(sourcePath, targetPath, atomic)
+            }
+        }
+        var conflictCalls = 0
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations)) {
+            conflictCalls += 1
+            ReplacementDecision.CANCEL
+        }
+
+        assertTrue(outcome is EngineOutcome.Cancelled)
+        assertEquals(1, conflictCalls)
+        assertArrayEquals(lateTargetBytes, Files.readAllBytes(target))
+        assertFalse(Files.exists(staged))
+    }
+
+    @Test
+    fun missingTargetDuringPublishIsNotReportedAsMissingSource() = runTest {
+        val root = temporaryFolder.newFolder("missing-publish-target").toPath()
+        val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+                throw NoSuchFileException(target.toString())
+            }
+        }
+
+        val outcome = executeCopy(source, targetDirectory, FileOperationEngine(fileSystem = operations))
+
+        assertEquals("目标发布失败", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
+    }
+
+    @Test
+    fun stagedCleanupFailureIsReportedWithExactPath() = runTest {
+        val root = temporaryFolder.newFolder("staged-cleanup-failure").toPath()
+        val source = Files.write(root.resolve("source.txt"), "source".toByteArray())
+        val targetDirectory = Files.createDirectory(root.resolve("target"))
+        val target = targetDirectory.resolve("source.txt")
+        val staged = temporaryFile(target, "task-1")
+        val copier = FileByteCopier { _, temporaryTarget, _, _ ->
+            Files.write(temporaryTarget, byteArrayOf(1))
+            throw IOException("forced copy failure")
+        }
+        val operations = object : DelegatingFileSystemOperations() {
+            override fun delete(path: Path) {
+                if (path == staged) throw IOException("forced staged cleanup failure")
+                super.delete(path)
+            }
+        }
+
+        val outcome = executeCopy(
+            source,
+            targetDirectory,
+            FileOperationEngine(byteCopier = copier, fileSystem = operations),
+        )
+
+        val failure = (outcome as EngineOutcome.Failed).result.failures.single()
+        assertTrue(failure.userMessage.contains("任务临时文件清理失败"))
+        assertTrue(failure.technicalMessage.orEmpty().contains(staged.toString()))
+        assertTrue(failure.technicalMessage.orEmpty().contains("forced staged cleanup failure"))
+        assertTrue(Files.exists(staged))
+    }
+
     private suspend fun executeCopy(
         source: Path,
         targetDirectory: Path,
         engine: FileOperationEngine = FileOperationEngine(),
+        type: FileOperationType = FileOperationType.COPY,
+        cancellation: OperationCancellation = OperationCancellation(),
+        onConflict: suspend (FileConflict) -> ReplacementDecision = { ReplacementDecision.REPLACE_ALL },
     ): EngineOutcome = engine.execute(
         request = FileOperationRequest(
             taskId = "task-1",
-            type = FileOperationType.COPY,
+            type = type,
             sources = listOf(source),
             targetDirectory = targetDirectory,
         ),
@@ -126,8 +486,19 @@ class FileOperationEngineFileTest {
             itemCount = 1,
             totalBytes = if (Files.exists(source)) Files.size(source) else 3L,
         ),
-        cancellation = OperationCancellation(),
+        cancellation = cancellation,
         onProgress = {},
-        onConflict = { ReplacementDecision.REPLACE_ALL },
+        onConflict = onConflict,
     )
+
+    private open class DelegatingFileSystemOperations : FileSystemOperations {
+        override fun move(sourcePath: Path, targetPath: Path, atomic: Boolean) {
+            if (atomic) Files.move(sourcePath, targetPath, ATOMIC_MOVE)
+            else Files.move(sourcePath, targetPath)
+        }
+
+        override fun delete(path: Path) {
+            Files.deleteIfExists(path)
+        }
+    }
 }
