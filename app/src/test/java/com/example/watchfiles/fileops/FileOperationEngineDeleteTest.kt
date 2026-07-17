@@ -69,6 +69,21 @@ class FileOperationEngineDeleteTest {
         val outcome = executeDelete(source, root, engine = engine)
 
         assertTrue(outcome is EngineOutcome.Failed)
+        assertEquals("没有权限删除", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
+        assertTrue(Files.exists(source))
+    }
+
+    @Test
+    fun genericDeleteFailureReportsDeleteFailed() = runTest {
+        val root = temporaryFolder.newFolder("generic-failure").toPath()
+        val source = Files.write(root.resolve("source.txt"), byteArrayOf(1))
+        val engine = engineWithFileSystem(
+            FailingDeleteFileSystem(source) { IOException("disk error") },
+        )
+
+        val outcome = executeDelete(source, root, engine = engine)
+
+        assertTrue(outcome is EngineOutcome.Failed)
         assertEquals("删除失败", (outcome as EngineOutcome.Failed).result.failures.single().userMessage)
         assertTrue(Files.exists(source))
     }
@@ -169,6 +184,7 @@ class FileOperationEngineDeleteTest {
 
     private class FailingDeleteFileSystem(
         private val blocked: Path,
+        private val failure: (Path) -> Exception = { path -> AccessDeniedException(path.toString()) },
     ) : FileSystemOperations {
         override fun createNewFile(path: Path): OutputStream =
             Files.newOutputStream(path, StandardOpenOption.CREATE_NEW)
@@ -178,7 +194,7 @@ class FileOperationEngineDeleteTest {
         }
 
         override fun delete(path: Path) {
-            if (path == blocked) throw AccessDeniedException(path.toString())
+            if (path == blocked) throw failure(path)
             Files.deleteIfExists(path)
         }
     }

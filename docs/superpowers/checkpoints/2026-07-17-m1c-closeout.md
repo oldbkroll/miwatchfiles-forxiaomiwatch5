@@ -1,14 +1,14 @@
 # M1C DELETE 阶段收尾
 
-日期：2026-07-17  
-基线：`33faee3`（Task 5）  
-阶段：M1C DELETE 确认与取消验收  
+日期：2026-07-17
+基线：`33faee3`（Task 5）
+阶段：M1C DELETE 确认与取消验收
 状态：Debug 真机证据完成；Release 交接不在本阶段范围。
 
 ## 构建、设备与安全范围
 
-- Debug gate：`:app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon --console=plain` 成功；93 tests，0 failures，0 errors，`LINT_ISSUE_NODES=0`。本阶段未构建 Release。
-- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`；SHA-256 为 `E20FBFA3B880086D1EC9B1F3C7EBCD5E37154273CA4725029BEB4EDEEE2DF277`。
+- Debug gate：`:app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon --console=plain` 成功；94 tests，0 failures，0 errors，4 skipped，`LINT_ISSUE_NODES=0`。其中 symlink/broken-symlink 相关用例因当前 Windows 主机不能创建符号链接而跳过；本阶段未构建 Release。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`；最终 SHA-256 为 `F0D61B417C956B9427670A913B6ECCDA38A22579FE2CB23CEF5D065DD41AF0C9`，权限文案修复后已重新安装到动态发现的 `192.168.31.60:38245`。
 - 安装前后动态运行 `adb devices -l` 与 `adb mdns services`；单文件/空目录/递归删除会话动态使用 `192.168.31.60:41113`，扩展取消会话动态使用 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，重新连接后的追加取消复核动态使用 `192.168.31.60:38245`，设备均为 `M2505W1/grasslte`。未假定或复用历史 serial；旧 transport 在重新发现时显示为 offline。
 - 安装成功后核对：`versionCode=6`、`versionName=0.3.1-dev-debug`、`targetSdk=29`。
 - 设备写入严格限制在 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox`。本次新增和删除进行中取消 fixture 的所有操作只在 `DeleteCancel` 下，未触碰 `DeleteFile`、`DeleteTree`、system/media 或个人目录。
@@ -23,7 +23,7 @@
 
 ## 本地安全验证、回归边界与 crash audit
 
-- 本地 DELETE scanner/engine 验证覆盖 root guard、注入 `AccessDeniedException` 子项失败、不可逆取消、无链接跟随及 `.part` 保留。
+- 本地 DELETE scanner/engine 验证覆盖 root guard、注入 `AccessDeniedException` 子项失败、不可逆取消、`.part` 保留；无链接跟随的 scanner/engine 用例在当前 Windows 主机因符号链接能力限制跳过，行为由 `NOFOLLOW_LINKS` 实现和真机常规路径验收保留，未将跳过用例写成已执行证据。
 - 本阶段未重跑 M1A 新建/重命名、M1B 实际 COPY/MOVE 或图片查看器；既有独立验收记录仍保留，不把未重跑项目写成当前设备结果。
 - 删除复现前清空过 logcat；UI inspector 期间的 helper `AndroidRuntime` 行与应用崩溃区分记录。全部 inspector 操作和清理结束后再次清空 logcat、冷启动 Debug 应用且不再调用 inspector；最终 `AndroidRuntime` 与 `FATAL EXCEPTION` 均为空。
 

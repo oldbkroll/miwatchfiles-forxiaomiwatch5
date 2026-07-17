@@ -357,6 +357,7 @@ class FileOperationEngine(
                     val first = treeFailures.first()
                     val userMessage = when {
                         first.error is NoSuchFileException && first.error.refersTo(source) -> "源项目已不存在"
+                        first.error is AccessDeniedException || first.error is SecurityException -> "没有权限删除"
                         !sourceIsDirectory && first.path == source -> "删除失败"
                         else -> "目录删除未完成，部分内容可能已删除"
                     }
