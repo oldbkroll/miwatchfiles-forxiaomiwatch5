@@ -432,6 +432,7 @@ class FileOperationEngine(
             onFailure(path, error)
             allChildrenDeleted = false
         }
+        cancellation.throwIfRequested()
         if (allChildrenDeleted) {
             return try {
                 fileSystem.delete(path)

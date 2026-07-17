@@ -104,6 +104,28 @@ class FileOperationEngineDeleteTest {
     }
 
     @Test
+    fun cancellationAfterOnlyChildDeletionLeavesParentUndeleted() = runTest {
+        val root = temporaryFolder.newFolder("cancel-single-child").toPath()
+        val source = Files.createDirectory(root.resolve("source"))
+        val child = Files.write(source.resolve("child.txt"), byteArrayOf(1))
+        val cancellation = OperationCancellation()
+        var progressCalls = 0
+
+        val outcome = executeDelete(
+            source,
+            root,
+            cancellation,
+            onProgress = {
+                if (progressCalls++ == 0) cancellation.request()
+            },
+        )
+
+        assertTrue(outcome is EngineOutcome.Cancelled)
+        assertTrue(Files.exists(source))
+        assertFalse(Files.exists(child))
+    }
+
+    @Test
     fun engineRejectsStorageRootEvenWhenCalledWithoutScanner() = runTest {
         val root = temporaryFolder.newFolder("root-guard").toPath()
         val outcome = executeDelete(root, root)
