@@ -123,6 +123,74 @@ class FileOperationCoordinatorTest {
         assertEquals(FileOperationState.Idle, coordinator.state.value)
     }
 
+    @Test fun deleteDoesNotCallEngineBeforeConfirmation() = runTest {
+        var engineCalls = 0
+        val engine = OperationEngineGateway { _, _, _, _, _ ->
+            engineCalls += 1
+            EngineOutcome.Completed(FileOperationResult(1, 0))
+        }
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(3, 12) },
+            engine = engine,
+        )
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+
+        assertTrue(coordinator.state.value is FileOperationState.WaitingForDeleteConfirmation)
+        assertEquals(0, engineCalls)
+    }
+
+    @Test fun deleteCancelBeforeConfirmationReturnsIdleWithoutDeleting() = runTest {
+        var engineCalls = 0
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(1, 1) },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                engineCalls += 1
+                EngineOutcome.Completed(FileOperationResult(1, 0))
+            },
+        )
+
+        coordinator.prepareDelete(listOf(source))
+        advanceUntilIdle()
+        coordinator.cancel()
+        advanceUntilIdle()
+
+        assertEquals(FileOperationState.Idle, coordinator.state.value)
+        assertEquals(0, engineCalls)
+    }
+
+    @Test fun deleteConfirmationStartsEngineAndMapsResult() = runTest {
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(1, 1) },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                EngineOutcome.Partial(FileOperationResult(0, 1))
+            },
+        )
+
+        coordinator.prepareDelete(listOf(source))
+        advanceUntilIdle()
+        assertTrue(coordinator.confirmDelete())
+        advanceUntilIdle()
+
+        assertTrue(coordinator.state.value is FileOperationState.PartiallySucceeded)
+        assertEquals(
+            FileOperationType.DELETE,
+            (coordinator.state.value as FileOperationState.PartiallySucceeded).type,
+        )
+    }
+
+    @Test fun secondTaskIsRejectedDuringDeleteConfirmation() = runTest {
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(1, 1) },
+        )
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+
+        assertFalse(coordinator.start(FileOperationType.COPY, listOf(source), target))
+    }
+
     private fun coordinator(
         scanner: OperationScannerGateway = OperationScannerGateway { _, _ -> ready },
         engine: OperationEngineGateway = engine { EngineOutcome.Completed(FileOperationResult(1, 0)) },

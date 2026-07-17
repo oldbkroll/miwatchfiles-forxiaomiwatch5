@@ -21,6 +21,7 @@ class FileOperationCoordinator(
     private var activeJob: Job? = null
     private var cancellation: OperationCancellation? = null
     private var conflictDecision: CompletableDeferred<ReplacementDecision>? = null
+    private var deleteConfirmation: CompletableDeferred<Boolean>? = null
     private var lastProgress: OperationProgress? = null
 
     fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean {
@@ -57,6 +58,49 @@ class FileOperationCoordinator(
                 activeJob = null
                 cancellation = null
                 conflictDecision = null
+            }
+        }
+        return true
+    }
+
+    fun prepareDelete(sources: List<Path>): Boolean {
+        if (_state.value != FileOperationState.Idle) return false
+        val request = FileOperationRequest.delete(taskIdFactory(), sources)
+        val token = OperationCancellation()
+        cancellation = token
+        lastProgress = null
+        _state.value = FileOperationState.Scanning(FileOperationType.DELETE)
+        activeJob = viewModelScope.launch {
+            try {
+                when (val scan = scanner.scan(request, token)) {
+                    is ScanOutcome.Rejected -> {
+                        _state.value = FileOperationState.Failed(
+                            FileOperationType.DELETE,
+                            FileOperationResult(0, 1, listOf(scan.failure)),
+                        )
+                    }
+                    is ScanOutcome.Ready -> {
+                        val preview = DeletePreview(
+                            topLevelCount = request.sources.distinct().size,
+                            itemCount = scan.itemCount,
+                            totalBytes = scan.totalBytes,
+                        )
+                        val gate = CompletableDeferred<Boolean>()
+                        deleteConfirmation = gate
+                        _state.value = FileOperationState.WaitingForDeleteConfirmation(preview)
+                        if (gate.await()) runEngine(request, scan, token)
+                    }
+                }
+            } catch (_: OperationCancelledException) {
+                if (_state.value is FileOperationState.Scanning ||
+                    _state.value is FileOperationState.WaitingForDeleteConfirmation
+                ) {
+                    _state.value = FileOperationState.Idle
+                }
+            } finally {
+                activeJob = null
+                cancellation = null
+                deleteConfirmation = null
             }
         }
         return true
@@ -108,9 +152,23 @@ class FileOperationCoordinator(
         conflictDecision?.complete(ReplacementDecision.REPLACE_ALL)
     }
 
+    fun confirmDelete(): Boolean {
+        val state = _state.value
+        if (state !is FileOperationState.WaitingForDeleteConfirmation) return false
+        val initial = OperationProgress(null, 0, state.preview.itemCount, 0, state.preview.totalBytes)
+        _state.value = FileOperationState.Running(FileOperationType.DELETE, initial)
+        return deleteConfirmation?.complete(true) == true
+    }
+
     fun cancel() {
         val current = _state.value
         if (current is FileOperationState.Idle || current.isTerminal()) return
+        if (current is FileOperationState.WaitingForDeleteConfirmation) {
+            cancellation?.request()
+            deleteConfirmation?.complete(false)
+            _state.value = FileOperationState.Idle
+            return
+        }
         cancellation?.request()
         conflictDecision?.complete(ReplacementDecision.CANCEL)
         val type = when (current) {
