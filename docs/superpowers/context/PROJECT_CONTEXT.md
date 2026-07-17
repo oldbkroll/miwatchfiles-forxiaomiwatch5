@@ -1,7 +1,7 @@
 # WatchFiles 项目交接上下文
 
-更新日期：2026-07-16
-当前阶段：M0、图片查看增量、M1A 和 M1B 已完成；下一阶段为 M1C 删除确认
+更新日期：2026-07-17
+当前阶段：M0、图片查看增量、M1A、M1B 和 M1C 已完成；下一阶段为 M2 媒体与文本查看
 
 ## 项目目标
 
@@ -83,7 +83,7 @@
 - 文件权限引导
 - Android Lint 和 Debug APK 构建通过
 
-尚未实现复制、移动、删除、长任务队列、`.part` 临时文件、失败恢复和缩略图缓存。
+M0 初期尚未实现复制、移动、删除、长任务队列、`.part` 临时文件、失败恢复和缩略图缓存；这些能力已分别在 M1B/M1C 增量中加入，前台任务恢复和缓存仍留给后续阶段。
 
 ## M1A 基础文件操作增量
 
@@ -101,7 +101,7 @@
 
 小米 Watch 5 真机已在 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` 验证长按多选、返回退出选择、新建文件夹和重命名；搜狗手表输入法可正常弹出并通过 Done 提交。测试目录中的 `original.txt` 已成功重命名为 `renamed.txt`。把它再次重命名为已存在的 `NewFolderl` 时，编辑页显示“已存在同名项目”，文件和文件夹均保持不变，文件内容未损坏且应用未崩溃。
 
-M1B 已实现单任务队列、安全复制与移动、同名冲突决策、取消清理和错误结果处理；删除仍不可用，下一步为 M1C 删除确认，并要求二次确认。
+M1B 已实现单任务队列、安全复制与移动、同名冲突决策、取消清理和错误结果处理。M1C 已加入 DELETE 预扫描、独立永久删除确认、根目录双重保护、无链接跟随的深度优先删除、失败/部分成功映射和取消语义；真机证据见 [`2026-07-17-m1c-closeout.md`](../checkpoints/2026-07-17-m1c-closeout.md)。
 
 M1B 的代码、自动化验证和小米 Watch 5 真机验收结论见 [`2026-07-16-m1b-closeout.md`](../checkpoints/2026-07-16-m1b-closeout.md)。
 
@@ -241,7 +241,7 @@ adb logcat -d AndroidRuntime:E *:S
 
 ## 下一步建议
 
-开始 M1C 删除确认设计与实现。所有写操作继续限定在 `Download/WatchFilesTest/M1Sandbox` 真机验收；删除必须先做失败测试，再提供二次确认、取消和失败恢复路径。
+开始 M2 媒体与文本查看。继续保留 `targetSdk 29`、`android:requestLegacyExternalStorage="true"`、`armeabi-v7a`、小米表冠自定义滚动、动态无线 ADB 和 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` 写入限制；开发期只构建 Debug，Release 交接另行进行。
 
 ## 开发约束
 
