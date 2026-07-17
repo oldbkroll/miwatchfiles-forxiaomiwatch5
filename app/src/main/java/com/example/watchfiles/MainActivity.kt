@@ -120,6 +120,7 @@ private enum class AppScreen {
     DEVICE_INFO,
     NAME_EDITOR,
     TARGET_DIRECTORY,
+    DELETE_CONFIRMATION,
     FILE_OPERATION,
 }
 
@@ -327,6 +328,10 @@ private fun WatchFilesApp(
                 }
             }
             AppScreen.TARGET_DIRECTORY -> screen = AppScreen.BROWSER
+            AppScreen.DELETE_CONFIRMATION -> {
+                fileOperationCoordinator.cancel()
+                screen = AppScreen.BROWSER
+            }
             AppScreen.FILE_OPERATION -> Unit
             AppScreen.HOME -> Unit
         }
@@ -383,6 +388,13 @@ private fun WatchFilesApp(
                 pendingOperationSources = browserState.selection.selectedPaths.toList()
                 targetDirectoryViewModel.open(browserState.currentPath)
                 screen = AppScreen.TARGET_DIRECTORY
+            },
+            onDeleteSelected = {
+                pendingOperationType = FileOperationType.DELETE
+                pendingOperationSources = browserState.selection.selectedPaths.toList()
+                if (fileOperationCoordinator.prepareDelete(pendingOperationSources)) {
+                    screen = AppScreen.DELETE_CONFIRMATION
+                }
             },
         )
         AppScreen.FILE_DETAILS -> selectedFile?.let { entry ->
@@ -450,6 +462,20 @@ private fun WatchFilesApp(
                 ) screen = AppScreen.FILE_OPERATION
             },
             onCancel = { screen = AppScreen.BROWSER },
+        )
+        AppScreen.DELETE_CONFIRMATION -> DeleteConfirmationScreen(
+            state = operationState,
+            onConfirm = fileOperationCoordinator::confirmDelete,
+            onCancel = {
+                fileOperationCoordinator.cancel()
+                screen = AppScreen.BROWSER
+            },
+            onDone = {
+                browserViewModel.refreshAfterOperation()
+                fileOperationCoordinator.consumeResult()
+                pendingOperationSources = emptyList()
+                screen = AppScreen.BROWSER
+            },
         )
         AppScreen.FILE_OPERATION -> FileOperationScreen(
             state = operationState,
@@ -547,6 +573,7 @@ private fun BrowserScreen(
     onRenameSelected: () -> Unit,
     onCopySelected: () -> Unit,
     onMoveSelected: () -> Unit,
+    onDeleteSelected: () -> Unit,
 ) {
     val visibleEntries = remember(state.entries, state.showHidden) {
         if (state.showHidden) state.entries else state.entries.filterNot(FileEntry::isHidden)
@@ -571,6 +598,13 @@ private fun BrowserScreen(
                     label = "移动",
                     secondary = "复制成功后删除源项目",
                     onClick = onMoveSelected,
+                )
+            }
+            item {
+                AppChip(
+                    label = "删除",
+                    secondary = "永久删除，无法恢复",
+                    onClick = onDeleteSelected,
                 )
             }
             item {

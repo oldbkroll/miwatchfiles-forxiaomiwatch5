@@ -97,6 +97,45 @@ internal fun FileOperationScreen(
     }
 }
 
+@Composable
+internal fun DeleteConfirmationScreen(
+    state: FileOperationState,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    onDone: () -> Unit,
+) {
+    RoundList {
+        when (state) {
+            is FileOperationState.Scanning -> {
+                item { ListHeader { Text("正在扫描删除内容…") } }
+                item { AppChip("取消", "不删除任何文件", onClick = onCancel) }
+            }
+            is FileOperationState.WaitingForDeleteConfirmation -> {
+                item { ListHeader { Text("确认永久删除") } }
+                item {
+                    AppChip(
+                        "项目",
+                        "${state.preview.topLevelCount} 项 · 共 ${state.preview.itemCount} 项",
+                        onClick = {},
+                    )
+                }
+                item {
+                    AppChip(
+                        "大小",
+                        state.preview.totalBytes?.let(::formatBytes) ?: "大小未知",
+                        onClick = {},
+                    )
+                }
+                item { AppChip("警告", "永久删除，无法恢复", onClick = {}) }
+                item { AppChip("永久删除", "开始删除任务", onClick = onConfirm) }
+                item { AppChip("取消", "返回原目录", onClick = onCancel) }
+            }
+            is FileOperationState.Failed -> terminal("删除前检查失败", state.result, onDone)
+            else -> item { Text("删除状态不可用") }
+        }
+    }
+}
+
 private fun androidx.wear.compose.foundation.lazy.ScalingLazyListScope.terminal(
     title: String,
     result: com.example.watchfiles.fileops.FileOperationResult,
