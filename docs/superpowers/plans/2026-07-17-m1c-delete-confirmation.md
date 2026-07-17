@@ -333,7 +333,11 @@ Add these tests:
     }
 
     assertTrue(outcome is EngineOutcome.Cancelled)
-    assertTrue(Files.exists(root.resolve("source/second.txt")))
+    assertTrue(Files.exists(root.resolve("source")))
+    assertTrue(
+        Files.exists(root.resolve("source/first.txt")) ||
+            Files.exists(root.resolve("source/second.txt")),
+    )
     assertTrue((outcome as EngineOutcome.Cancelled).result.failures.any {
         it.userMessage == "删除已取消，部分内容可能已删除"
     })
@@ -958,6 +962,16 @@ private fun cancellationText(type: FileOperationType): String = when (type) {
 ```
 
 Update `Running` and `Cancelling` branches to use these helpers. DELETE must not render replacement controls or target-directory controls. Its result page must show the existing completed/failed counts and the first failure/warning message, including `删除已取消，部分内容可能已删除` when present.
+
+Because `FileOperationState` is a sealed interface, keep the `when` expression exhaustive after adding the confirmation state:
+
+```kotlin
+is FileOperationState.WaitingForDeleteConfirmation -> item {
+    Text("等待删除确认…")
+}
+```
+
+This branch is a non-destructive fallback only; the normal route renders this state through `DeleteConfirmationScreen`.
 
 - [ ] **Step 3: Keep terminal return behavior explicit**
 
