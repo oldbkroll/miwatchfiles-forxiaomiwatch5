@@ -191,6 +191,96 @@ class FileOperationCoordinatorTest {
         assertFalse(coordinator.start(FileOperationType.COPY, listOf(source), target))
     }
 
+    @Test fun deleteCancelKeepsTaskActiveUntilConfirmationCleanupCompletes() = runTest {
+        val copyScanGate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(scanner = OperationScannerGateway { request, token ->
+            if (request.type == FileOperationType.DELETE) {
+                ready
+            } else {
+                copyScanGate.await()
+                token.throwIfRequested()
+                ready
+            }
+        })
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+
+        coordinator.cancel()
+
+        assertTrue(coordinator.state.value is FileOperationState.WaitingForDeleteConfirmation)
+        assertFalse(coordinator.start(FileOperationType.COPY, listOf(source), target))
+
+        advanceUntilIdle()
+
+        assertEquals(FileOperationState.Idle, coordinator.state.value)
+        assertTrue(coordinator.start(FileOperationType.COPY, listOf(source), target))
+        runCurrent()
+        coordinator.cancel()
+        copyScanGate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(coordinator.state.value is FileOperationState.Cancelled)
+    }
+
+    @Test fun deletePreScanCancellationReturnsIdleWithoutCallingEngine() = runTest {
+        val scanGate = CompletableDeferred<Unit>()
+        var engineCalls = 0
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, token ->
+                scanGate.await()
+                token.throwIfRequested()
+                ready
+            },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                engineCalls += 1
+                EngineOutcome.Completed(FileOperationResult(1, 0))
+            },
+        )
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        runCurrent()
+        coordinator.cancel()
+        scanGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(FileOperationState.Idle, coordinator.state.value)
+        assertEquals(0, engineCalls)
+    }
+
+    @Test fun confirmedDeleteCancellationMapsToCancelled() = runTest {
+        val engineGate = CompletableDeferred<Unit>()
+        val coordinator = coordinator(engine = OperationEngineGateway { _, _, token, _, _ ->
+            engineGate.await()
+            token.throwIfRequested()
+            EngineOutcome.Completed(FileOperationResult(1, 0))
+        })
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+        assertTrue(coordinator.confirmDelete())
+        runCurrent()
+        coordinator.cancel()
+        engineGate.complete(Unit)
+        advanceUntilIdle()
+
+        val state = coordinator.state.value as FileOperationState.Cancelled
+        assertEquals(FileOperationType.DELETE, state.type)
+    }
+
+    @Test fun deleteScannerExceptionMapsToFailed() = runTest {
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> error("scanner failed") },
+        )
+
+        assertTrue(coordinator.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+
+        val state = coordinator.state.value as FileOperationState.Failed
+        assertEquals(FileOperationType.DELETE, state.type)
+        assertEquals(1, state.result.failedItems)
+        assertEquals("scanner failed", state.result.failures.single().technicalMessage)
+    }
+
     private fun coordinator(
         scanner: OperationScannerGateway = OperationScannerGateway { _, _ -> ready },
         engine: OperationEngineGateway = engine { EngineOutcome.Completed(FileOperationResult(1, 0)) },

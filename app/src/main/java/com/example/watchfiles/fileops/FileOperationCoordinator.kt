@@ -6,6 +6,7 @@ import java.nio.file.Path
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,6 +72,9 @@ class FileOperationCoordinator(
         lastProgress = null
         _state.value = FileOperationState.Scanning(FileOperationType.DELETE)
         activeJob = viewModelScope.launch {
+            var confirmation: CompletableDeferred<Boolean>? = null
+            var enteredExecution = false
+            var returnToIdle = false
             try {
                 when (val scan = scanner.scan(request, token)) {
                     is ScanOutcome.Rejected -> {
@@ -86,21 +90,43 @@ class FileOperationCoordinator(
                             totalBytes = scan.totalBytes,
                         )
                         val gate = CompletableDeferred<Boolean>()
+                        confirmation = gate
                         deleteConfirmation = gate
                         _state.value = FileOperationState.WaitingForDeleteConfirmation(preview)
-                        if (gate.await()) runEngine(request, scan, token)
+                        if (gate.await()) {
+                            enteredExecution = true
+                            runEngine(request, scan, token)
+                        } else {
+                            returnToIdle = true
+                        }
                     }
                 }
             } catch (_: OperationCancelledException) {
-                if (_state.value is FileOperationState.Scanning ||
-                    _state.value is FileOperationState.WaitingForDeleteConfirmation
-                ) {
-                    _state.value = FileOperationState.Idle
+                if (enteredExecution) {
+                    _state.value = FileOperationState.Cancelled(
+                        FileOperationType.DELETE,
+                        FileOperationResult(0, 0),
+                    )
+                } else {
+                    returnToIdle = true
                 }
+            } catch (error: Exception) {
+                runCatching { android.util.Log.e("WatchFiles", "File task failed", error) }
+                _state.value = FileOperationState.Failed(
+                    FileOperationType.DELETE,
+                    FileOperationResult(
+                        0,
+                        1,
+                        listOf(FileOperationFailure(null, "文件操作失败", error.message)),
+                    ),
+                )
             } finally {
-                activeJob = null
-                cancellation = null
-                deleteConfirmation = null
+                if (activeJob === currentCoroutineContext()[Job]) activeJob = null
+                if (cancellation === token) cancellation = null
+                if (confirmation != null && deleteConfirmation === confirmation) {
+                    deleteConfirmation = null
+                }
+                if (returnToIdle) _state.value = FileOperationState.Idle
             }
         }
         return true
@@ -166,7 +192,6 @@ class FileOperationCoordinator(
         if (current is FileOperationState.WaitingForDeleteConfirmation) {
             cancellation?.request()
             deleteConfirmation?.complete(false)
-            _state.value = FileOperationState.Idle
             return
         }
         cancellation?.request()
