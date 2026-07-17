@@ -283,6 +283,13 @@ private fun WatchFilesApp(
     val scope = rememberCoroutineScope()
     val storageRoot = remember { Environment.getExternalStorageDirectory().toPath() }
 
+    val finishPendingOperation = {
+        browserViewModel.refreshAfterOperation()
+        fileOperationCoordinator.consumeResult()
+        pendingOperationSources = emptyList()
+        screen = AppScreen.BROWSER
+    }
+
     val resetBrowserPosition = {
         scope.launch { browserListState.scrollToItem(0) }
     }
@@ -328,9 +335,20 @@ private fun WatchFilesApp(
                 }
             }
             AppScreen.TARGET_DIRECTORY -> screen = AppScreen.BROWSER
-            AppScreen.DELETE_CONFIRMATION -> {
-                fileOperationCoordinator.cancel()
-                screen = AppScreen.BROWSER
+            AppScreen.DELETE_CONFIRMATION -> when (operationState) {
+                is FileOperationState.Scanning,
+                is FileOperationState.WaitingForDeleteConfirmation -> {
+                    fileOperationCoordinator.cancel()
+                    screen = AppScreen.BROWSER
+                }
+                is FileOperationState.Failed,
+                is FileOperationState.Succeeded,
+                is FileOperationState.PartiallySucceeded,
+                is FileOperationState.Cancelled -> finishPendingOperation()
+                is FileOperationState.Running,
+                is FileOperationState.WaitingForReplacement,
+                is FileOperationState.Cancelling -> screen = AppScreen.FILE_OPERATION
+                FileOperationState.Idle -> screen = AppScreen.BROWSER
             }
             AppScreen.FILE_OPERATION -> Unit
             AppScreen.HOME -> Unit
@@ -465,28 +483,22 @@ private fun WatchFilesApp(
         )
         AppScreen.DELETE_CONFIRMATION -> DeleteConfirmationScreen(
             state = operationState,
-            onConfirm = fileOperationCoordinator::confirmDelete,
+            onConfirm = {
+                if (fileOperationCoordinator.confirmDelete()) {
+                    screen = AppScreen.FILE_OPERATION
+                }
+            },
             onCancel = {
                 fileOperationCoordinator.cancel()
                 screen = AppScreen.BROWSER
             },
-            onDone = {
-                browserViewModel.refreshAfterOperation()
-                fileOperationCoordinator.consumeResult()
-                pendingOperationSources = emptyList()
-                screen = AppScreen.BROWSER
-            },
+            onDone = finishPendingOperation,
         )
         AppScreen.FILE_OPERATION -> FileOperationScreen(
             state = operationState,
             onReplaceAll = fileOperationCoordinator::replaceAll,
             onCancel = fileOperationCoordinator::cancel,
-            onDone = {
-                browserViewModel.refreshAfterOperation()
-                fileOperationCoordinator.consumeResult()
-                pendingOperationSources = emptyList()
-                screen = AppScreen.BROWSER
-            },
+            onDone = finishPendingOperation,
         )
     }
 }
