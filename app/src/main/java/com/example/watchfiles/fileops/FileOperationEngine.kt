@@ -102,33 +102,15 @@ class FileOperationEngine(
         onProgress: (OperationProgress) -> Unit,
         onConflict: suspend (FileConflict) -> ReplacementDecision,
     ): EngineOutcome {
+        if (request.type == FileOperationType.DELETE) {
+            return executeDelete(request, scan, cancellation, onProgress)
+        }
         var completed = 0
         var processedBytes = 0L
         var replaceAll = false
         var staged: Path? = null
         var progressItems = 0
         return try {
-            if (request.type == FileOperationType.DELETE) {
-                val normalizedStorageRoot = storageRoot().toAbsolutePath().normalize()
-                val rootSource = request.sources
-                    .map { it.toAbsolutePath().normalize() }
-                    .distinct()
-                    .firstOrNull { it == normalizedStorageRoot }
-                if (rootSource != null) {
-                    return EngineOutcome.Failed(
-                        FileOperationResult(
-                            completedItems = 0,
-                            failedItems = 1,
-                            failures = listOf(
-                                FileOperationFailure(
-                                    source = rootSource,
-                                    userMessage = "不能删除内部存储根目录",
-                                ),
-                            ),
-                        ),
-                    )
-                }
-            }
             suspend fun approveReplacement(source: Path, target: Path) {
                 if (replaceAll) return
                 if (onConflict(FileConflict(source, target)) == ReplacementDecision.CANCEL) {
@@ -322,6 +304,159 @@ class FileOperationEngine(
             )
         }
     }
+
+    private fun executeDelete(
+        request: FileOperationRequest,
+        scan: ScanOutcome.Ready,
+        cancellation: OperationCancellation,
+        onProgress: (OperationProgress) -> Unit,
+    ): EngineOutcome {
+        val root = storageRoot().toAbsolutePath().normalize()
+        var completed = 0
+        var processedItems = 0
+        var processedBytes = 0L
+        val failures = mutableListOf<FileOperationFailure>()
+        var currentSource: Path? = null
+
+        return try {
+            for (source in request.sources.map { it.toAbsolutePath().normalize() }.distinct()) {
+                cancellation.throwIfRequested()
+                currentSource = source
+                if (source == root) {
+                    failures += FileOperationFailure(source, "不能删除内部存储根目录")
+                    currentSource = null
+                    continue
+                }
+                if (!Files.exists(source, NOFOLLOW_LINKS)) {
+                    failures += FileOperationFailure(source, "源项目已不存在")
+                    currentSource = null
+                    continue
+                }
+
+                val sourceIsDirectory = Files.isDirectory(source, NOFOLLOW_LINKS)
+                val treeFailures = mutableListOf<DeleteFailure>()
+                val deleted = deleteTreeNoFollow(
+                    path = source,
+                    cancellation = cancellation,
+                    onDeleted = { path, bytes ->
+                        processedItems += 1
+                        processedBytes += bytes
+                        onProgress(
+                            OperationProgress(
+                                path.fileName?.toString(),
+                                processedItems,
+                                scan.itemCount,
+                                processedBytes,
+                                scan.totalBytes,
+                            ),
+                        )
+                    },
+                    onFailure = { path, error -> treeFailures += DeleteFailure(path, error) },
+                )
+                if (treeFailures.isNotEmpty()) {
+                    val first = treeFailures.first()
+                    val userMessage = when {
+                        first.error is NoSuchFileException && first.error.refersTo(source) -> "源项目已不存在"
+                        !sourceIsDirectory && first.path == source -> "删除失败"
+                        else -> "目录删除未完成，部分内容可能已删除"
+                    }
+                    failures += FileOperationFailure(
+                        source,
+                        userMessage,
+                        "${first.path}: ${first.error.message ?: first.error.javaClass.simpleName}",
+                    )
+                } else if (deleted && !Files.exists(source, NOFOLLOW_LINKS)) {
+                    completed += 1
+                } else {
+                    failures += FileOperationFailure(source, "目录删除未完成，部分内容可能已删除")
+                }
+                currentSource = null
+            }
+            resultForFailures(completed, failures)
+        } catch (_: OperationCancelledException) {
+            currentSource?.let { source ->
+                if (Files.exists(source, NOFOLLOW_LINKS)) {
+                    failures += FileOperationFailure(source, "删除已取消，部分内容可能已删除")
+                }
+            }
+            EngineOutcome.Cancelled(FileOperationResult(completed, failures.size, failures))
+        } catch (error: Exception) {
+            val source = currentSource
+            failures += FileOperationFailure(
+                source,
+                when {
+                    error is NoSuchFileException && error.refersTo(source) -> "源项目已不存在"
+                    error is AccessDeniedException || error is SecurityException -> "没有权限删除"
+                    else -> "删除失败"
+                },
+                error.message ?: error.javaClass.simpleName,
+            )
+            resultForFailures(completed, failures)
+        }
+    }
+
+    private fun deleteTreeNoFollow(
+        path: Path,
+        cancellation: OperationCancellation,
+        onDeleted: (Path, Long) -> Unit,
+        onFailure: (Path, Exception) -> Unit,
+    ): Boolean {
+        cancellation.throwIfRequested()
+        if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+            return try {
+                val size = if (Files.isRegularFile(path, NOFOLLOW_LINKS)) Files.size(path) else 0L
+                fileSystem.delete(path)
+                onDeleted(path, size)
+                true
+            } catch (error: OperationCancelledException) {
+                throw error
+            } catch (error: Exception) {
+                onFailure(path, error)
+                false
+            }
+        }
+
+        var allChildrenDeleted = true
+        try {
+            Files.newDirectoryStream(path).use { children ->
+                for (child in children) {
+                    cancellation.throwIfRequested()
+                    if (!deleteTreeNoFollow(child, cancellation, onDeleted, onFailure)) {
+                        allChildrenDeleted = false
+                    }
+                }
+            }
+        } catch (error: OperationCancelledException) {
+            throw error
+        } catch (error: Exception) {
+            onFailure(path, error)
+            allChildrenDeleted = false
+        }
+        if (allChildrenDeleted) {
+            return try {
+                fileSystem.delete(path)
+                onDeleted(path, 0L)
+                true
+            } catch (error: OperationCancelledException) {
+                throw error
+            } catch (error: Exception) {
+                onFailure(path, error)
+                false
+            }
+        }
+        return false
+    }
+
+    private fun resultForFailures(
+        completed: Int,
+        failures: List<FileOperationFailure>,
+    ): EngineOutcome = when {
+        failures.isEmpty() -> EngineOutcome.Completed(FileOperationResult(completed, 0))
+        completed == 0 -> EngineOutcome.Failed(FileOperationResult(completed, failures.size, failures))
+        else -> EngineOutcome.Partial(FileOperationResult(completed, failures.size, failures))
+    }
+
+    private data class DeleteFailure(val path: Path, val error: Exception)
 
     private fun publishStagedToNewTarget(staged: Path, target: Path) {
         fileSystem.moveNoReplace(staged, target)
