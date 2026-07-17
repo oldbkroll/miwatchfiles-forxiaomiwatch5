@@ -83,6 +83,25 @@ class FileOperationDeleteScannerTest {
         assertTrue(Files.exists(target.resolve("hidden.txt")))
     }
 
+    @Test fun deleteScanCountsBrokenSymlinkWithoutFollowingItsTarget() = runTest {
+        val root = temporaryFolder.newFolder("broken-symlink").toPath()
+        val link = root.resolve("link")
+        try {
+            Files.createSymbolicLink(link, root.resolve("missing-target"))
+        } catch (_: UnsupportedOperationException) {
+            Assume.assumeTrue("symlink unsupported", false)
+        } catch (_: IOException) {
+            Assume.assumeTrue("symlink unavailable", false)
+        }
+
+        val outcome = scanner(root).scan(
+            FileOperationRequest.delete("delete-broken-link", listOf(link)),
+            OperationCancellation(),
+        )
+
+        assertEquals(ScanOutcome.Ready(itemCount = 1, totalBytes = 0), outcome)
+    }
+
     private fun scanner(root: Path) = FileOperationScanner(
         storageRoot = { root },
         usableSpace = { Long.MAX_VALUE },

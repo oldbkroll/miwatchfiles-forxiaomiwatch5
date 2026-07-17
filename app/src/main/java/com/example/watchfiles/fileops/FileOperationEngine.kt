@@ -68,6 +68,7 @@ class FileOperationEngine(
     private val byteCopier: FileByteCopier = NioFileByteCopier(),
     private val fastMover: FastMover = NioFastMover(),
     private val sourceDeleter: SourceDeleter = NioSourceDeleter(),
+    private val storageRoot: () -> Path = { Paths.get("/storage/emulated/0") },
 ) : OperationEngineGateway {
     private var fileSystem: FileSystemOperations = NioFileSystemOperations()
     private var sourceProgressMeasurer: SourceProgressMeasurer = NioSourceProgressMeasurer()
@@ -78,7 +79,8 @@ class FileOperationEngine(
         fastMover: FastMover = NioFastMover(),
         sourceDeleter: SourceDeleter = NioSourceDeleter(),
         sourceProgressMeasurer: SourceProgressMeasurer = NioSourceProgressMeasurer(),
-    ) : this(Dispatchers.IO, byteCopier, fastMover, sourceDeleter) {
+        storageRoot: () -> Path = { Paths.get("/storage/emulated/0") },
+    ) : this(Dispatchers.IO, byteCopier, fastMover, sourceDeleter, storageRoot) {
         this.fileSystem = fileSystem
         this.sourceProgressMeasurer = sourceProgressMeasurer
     }
@@ -106,6 +108,27 @@ class FileOperationEngine(
         var staged: Path? = null
         var progressItems = 0
         return try {
+            if (request.type == FileOperationType.DELETE) {
+                val normalizedStorageRoot = storageRoot().toAbsolutePath().normalize()
+                val rootSource = request.sources
+                    .map { it.toAbsolutePath().normalize() }
+                    .distinct()
+                    .firstOrNull { it == normalizedStorageRoot }
+                if (rootSource != null) {
+                    return EngineOutcome.Failed(
+                        FileOperationResult(
+                            completedItems = 0,
+                            failedItems = 1,
+                            failures = listOf(
+                                FileOperationFailure(
+                                    source = rootSource,
+                                    userMessage = "不能删除内部存储根目录",
+                                ),
+                            ),
+                        ),
+                    )
+                }
+            }
             suspend fun approveReplacement(source: Path, target: Path) {
                 if (replaceAll) return
                 if (onConflict(FileConflict(source, target)) == ReplacementDecision.CANCEL) {

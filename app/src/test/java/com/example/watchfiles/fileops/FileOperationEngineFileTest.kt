@@ -43,6 +43,25 @@ class FileOperationEngineFileTest {
     }
 
     @Test
+    fun deleteRejectsStorageRootBeforeAnyMutation() = runTest {
+        val root = temporaryFolder.newFolder("delete-storage-root").toPath()
+        val child = Files.write(root.resolve("keep.txt"), "keep".toByteArray())
+
+        val outcome = FileOperationEngine(storageRoot = { root }).execute(
+            request = FileOperationRequest.delete("delete-root", listOf(root)),
+            scan = ScanOutcome.Ready(itemCount = 2, totalBytes = 4),
+            cancellation = OperationCancellation(),
+            onProgress = {},
+            onConflict = { ReplacementDecision.REPLACE_ALL },
+        )
+
+        val failure = (outcome as EngineOutcome.Failed).result.failures.single()
+        assertEquals("不能删除内部存储根目录", failure.userMessage)
+        assertTrue(Files.exists(root))
+        assertTrue(Files.exists(child))
+    }
+
+    @Test
     fun copyFailureLeavesSourceUnchangedAndRemovesTaskTemporaryPath() = runTest {
         val root = temporaryFolder.newFolder("copy-failure").toPath()
         val sourceBytes = "source-must-survive".toByteArray()

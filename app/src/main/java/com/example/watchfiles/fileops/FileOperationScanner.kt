@@ -60,7 +60,9 @@ class FileOperationScanner(
                 return reject(source, "不能删除内部存储根目录")
             }
             if (!Files.exists(source, NOFOLLOW_LINKS)) return reject(source, "源项目已不存在")
-            if (!Files.isReadable(source)) return reject(source, "源项目不可读")
+            if (!Files.isSymbolicLink(source) && !Files.isReadable(source)) {
+                return reject(source, "源项目不可读")
+            }
             if (request.type != FileOperationType.DELETE) {
                 val transferTarget = requireNotNull(target)
                 val sourceName = source.fileName
