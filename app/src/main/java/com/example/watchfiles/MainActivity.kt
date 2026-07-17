@@ -287,6 +287,7 @@ private fun WatchFilesApp(
         browserViewModel.refreshAfterOperation()
         fileOperationCoordinator.consumeResult()
         pendingOperationSources = emptyList()
+        pendingOperationType = FileOperationType.COPY
         screen = AppScreen.BROWSER
     }
 

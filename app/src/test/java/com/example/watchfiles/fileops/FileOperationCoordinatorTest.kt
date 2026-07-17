@@ -4,6 +4,7 @@ import com.example.watchfiles.browser.MainDispatcherRule
 import java.nio.file.Paths
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -247,20 +248,22 @@ class FileOperationCoordinatorTest {
         assertEquals(0, engineCalls)
     }
 
-    @Test fun confirmedDeleteCancellationMapsToCancelled() = runTest {
-        val engineGate = CompletableDeferred<Unit>()
-        val coordinator = coordinator(engine = OperationEngineGateway { _, _, token, _, _ ->
-            engineGate.await()
-            token.throwIfRequested()
-            EngineOutcome.Completed(FileOperationResult(1, 0))
-        })
+    @Test fun deleteCancelDuringExecutionMapsToCancelled() = runTest {
+        val engine = OperationEngineGateway { _, _, token, _, _ ->
+            while (!token.isRequested()) delay(1)
+            EngineOutcome.Cancelled(FileOperationResult(0, 1))
+        }
+        val coordinator = coordinator(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(2, 2) },
+            engine = engine,
+        )
 
-        assertTrue(coordinator.prepareDelete(listOf(source)))
+        coordinator.prepareDelete(listOf(source))
         advanceUntilIdle()
-        assertTrue(coordinator.confirmDelete())
+        coordinator.confirmDelete()
         runCurrent()
         coordinator.cancel()
-        engineGate.complete(Unit)
+        assertTrue(coordinator.state.value is FileOperationState.Cancelling)
         advanceUntilIdle()
 
         val state = coordinator.state.value as FileOperationState.Cancelled

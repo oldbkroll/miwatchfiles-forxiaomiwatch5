@@ -48,51 +48,41 @@ internal fun FileOperationScreen(
             }
             is FileOperationState.Running -> {
                 val progress = state.progress
-                item { ListHeader { Text(if (state.type == FileOperationType.COPY) "正在复制" else "正在移动") } }
+                item { ListHeader { Text(operationTitle(state.type)) } }
                 item { AppChip(progress.currentName ?: "准备中", "${progress.processedItems} / ${progress.totalItems}", onClick = {}) }
                 item {
                     val bytes = progress.totalBytes?.let { "${formatBytes(progress.processedBytes)} / ${formatBytes(it)}" }
                         ?: "已处理 ${formatBytes(progress.processedBytes)}"
                     AppChip("数据进度", bytes, onClick = {})
                 }
-                val cancelMessage = if (state.type == FileOperationType.COPY) {
-                    "停止并清理未发布项目"
-                } else {
-                    "停止；已完成项目保留在目标"
-                }
-                item { AppChip("取消", cancelMessage, onClick = onCancel) }
+                item { AppChip("取消", cancellationText(state.type), onClick = onCancel) }
             }
             is FileOperationState.WaitingForReplacement -> {
-                item { ListHeader { Text("发现同名项目") } }
-                item { AppChip(state.conflict.target.fileName.toString(), "现有同名项目会整体替换，不会合并", onClick = {}) }
-                item { AppChip("替换全部", "本任务后续同名项目不再询问", onClick = onReplaceAll) }
-                item { AppChip("取消任务", "保留现有目标", onClick = onCancel) }
-            }
-            is FileOperationState.WaitingForDeleteConfirmation -> {
-                item { ListHeader { Text("确认删除") } }
-                item { AppChip("删除 ${state.preview.itemCount} 项", "此操作不可撤销", onClick = {}) }
-                item { AppChip("取消任务", "保留源项目", onClick = onCancel) }
-            }
-            is FileOperationState.Cancelling -> item {
-                val message = if (state.type == FileOperationType.COPY) {
-                    "正在停止并清理临时文件…"
+                if (state.type == FileOperationType.DELETE) {
+                    item { Text("正在删除…") }
                 } else {
-                    "正在停止；已完成项目保留在目标…"
+                    item { ListHeader { Text("发现同名项目") } }
+                    item { AppChip(state.conflict.target.fileName.toString(), "现有同名项目会整体替换，不会合并", onClick = {}) }
+                    item { AppChip("替换全部", "本任务后续同名项目不再询问", onClick = onReplaceAll) }
+                    item { AppChip("取消任务", "保留现有目标", onClick = onCancel) }
                 }
-                ListHeader { Text(message) }
+            }
+            is FileOperationState.WaitingForDeleteConfirmation -> item { Text("等待删除确认…") }
+            is FileOperationState.Cancelling -> item {
+                ListHeader { Text(cancellingTitle(state.type)) }
             }
             is FileOperationState.Succeeded -> terminal(
-                if (state.type == FileOperationType.COPY) "复制完成" else "移动完成",
+                completedTitle(state.type),
                 state.result,
                 onDone,
             )
-            is FileOperationState.PartiallySucceeded -> terminal("部分完成", state.result, onDone)
+            is FileOperationState.PartiallySucceeded -> terminal(partialCompletionTitle(state.type), state.result, onDone)
             is FileOperationState.Failed -> terminal(
-                if (state.type == FileOperationType.COPY) "复制失败" else "移动失败",
+                failedTitle(state.type),
                 state.result,
                 onDone,
             )
-            is FileOperationState.Cancelled -> terminal("任务已取消", state.result, onDone)
+            is FileOperationState.Cancelled -> terminal(cancelledTitle(state.type), state.result, onDone)
         }
     }
 }
@@ -134,6 +124,50 @@ internal fun DeleteConfirmationScreen(
             else -> item { Text("删除状态不可用") }
         }
     }
+}
+
+private fun operationTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY -> "正在复制"
+    FileOperationType.MOVE -> "正在移动"
+    FileOperationType.DELETE -> "正在删除"
+}
+
+private fun cancellationText(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY -> "停止并清理未发布项目"
+    FileOperationType.MOVE -> "停止；已完成项目保留在目标"
+    FileOperationType.DELETE -> "停止；已删除内容无法恢复"
+}
+
+private fun cancellingTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY -> "正在停止并清理临时文件…"
+    FileOperationType.MOVE -> "正在停止；已完成项目保留在目标…"
+    FileOperationType.DELETE -> "正在停止；已删除内容无法恢复…"
+}
+
+private fun completedTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY -> "复制完成"
+    FileOperationType.MOVE -> "移动完成"
+    FileOperationType.DELETE -> "删除完成"
+}
+
+private fun partialCompletionTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY,
+    FileOperationType.MOVE,
+    -> "部分完成"
+    FileOperationType.DELETE -> "部分删除"
+}
+
+private fun failedTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY -> "复制失败"
+    FileOperationType.MOVE -> "移动失败"
+    FileOperationType.DELETE -> "删除失败"
+}
+
+private fun cancelledTitle(type: FileOperationType): String = when (type) {
+    FileOperationType.COPY,
+    FileOperationType.MOVE,
+    -> "任务已取消"
+    FileOperationType.DELETE -> "删除已取消"
 }
 
 private fun androidx.wear.compose.foundation.lazy.ScalingLazyListScope.terminal(
