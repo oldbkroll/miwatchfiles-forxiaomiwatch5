@@ -124,7 +124,7 @@ class FileOperationEngine(
                 } else if (!Files.isRegularFile(source, NOFOLLOW_LINKS)) {
                     throw UnsupportedSymbolicLinkException(source)
                 }
-                val target = request.targetDirectory.resolve(source.fileName)
+                val target = requireNotNull(request.targetDirectory).resolve(source.fileName)
                 val targetExisted = Files.exists(target, NOFOLLOW_LINKS)
                 if (targetExisted) approveReplacement(source, target)
                 if (request.type == FileOperationType.MOVE) {

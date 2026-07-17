@@ -2,13 +2,31 @@ package com.example.watchfiles.fileops
 
 import java.nio.file.Path
 
-enum class FileOperationType { COPY, MOVE }
+enum class FileOperationType { COPY, MOVE, DELETE }
 
 data class FileOperationRequest(
     val taskId: String,
     val type: FileOperationType,
     val sources: List<Path>,
-    val targetDirectory: Path,
+    val targetDirectory: Path? = null,
+) {
+    companion object {
+        fun transfer(
+            taskId: String,
+            type: FileOperationType,
+            sources: List<Path>,
+            targetDirectory: Path,
+        ) = FileOperationRequest(taskId, type, sources, targetDirectory)
+
+        fun delete(taskId: String, sources: List<Path>) =
+            FileOperationRequest(taskId, FileOperationType.DELETE, sources, null)
+    }
+}
+
+data class DeletePreview(
+    val topLevelCount: Int,
+    val itemCount: Int,
+    val totalBytes: Long?,
 )
 
 data class OperationProgress(
@@ -46,6 +64,9 @@ sealed interface FileOperationState {
         val type: FileOperationType,
         val conflict: FileConflict,
         val progress: OperationProgress,
+    ) : FileOperationState
+    data class WaitingForDeleteConfirmation(
+        val preview: DeletePreview,
     ) : FileOperationState
     data class Cancelling(val type: FileOperationType, val progress: OperationProgress?) : FileOperationState
     data class Succeeded(val type: FileOperationType, val result: FileOperationResult) : FileOperationState

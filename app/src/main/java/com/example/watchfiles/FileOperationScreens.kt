@@ -68,6 +68,11 @@ internal fun FileOperationScreen(
                 item { AppChip("替换全部", "本任务后续同名项目不再询问", onClick = onReplaceAll) }
                 item { AppChip("取消任务", "保留现有目标", onClick = onCancel) }
             }
+            is FileOperationState.WaitingForDeleteConfirmation -> {
+                item { ListHeader { Text("确认删除") } }
+                item { AppChip("删除 ${state.preview.itemCount} 项", "此操作不可撤销", onClick = {}) }
+                item { AppChip("取消任务", "保留源项目", onClick = onCancel) }
+            }
             is FileOperationState.Cancelling -> item {
                 val message = if (state.type == FileOperationType.COPY) {
                     "正在停止并清理临时文件…"
