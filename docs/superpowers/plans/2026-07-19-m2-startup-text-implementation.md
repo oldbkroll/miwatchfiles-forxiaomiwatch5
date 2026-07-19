@@ -243,6 +243,7 @@ StandardCharsets.UTF_8.newDecoder()
 git diff --check
 git add app/src/main/java/com/example/watchfiles/text app/src/test/java/com/example/watchfiles/text/TextFileReaderTest.kt
 git commit -m "feat: add bounded UTF-8 text reader"
+```
 
 ### Task 4: 以失败测试驱动安全文本写入和事务模型
 
@@ -502,6 +503,7 @@ fun discardChanges()
 ```powershell
 git add app/src/main/java/com/example/watchfiles/text app/src/test/java/com/example/watchfiles/text/TextDocumentViewModelTest.kt
 git commit -m "feat: add text document state flow"
+```
 
 ### Task 7: 集成圆屏文本页面和导航
 
@@ -665,5 +667,3 @@ git commit -m "feat: complete M2 text workflow and performance baseline"
 ```
 
 预期：提交成功，memo 没有进入暂存区；最终报告只声称有实际证据支持的功能和真机结果。
-```
-```
