@@ -20,7 +20,8 @@ import java.util.UUID
 class SafeTextWriteRepository(
     private val journal: TextTransactionJournal,
     private val faultInjector: TextWriteFaultInjector = TextWriteFaultInjector { },
-) {
+) : TextWriteGateway {
+    override
     suspend fun save(request: TextWriteRequest): TextWriteResult = withContext(Dispatchers.IO) {
         var record: TextTransactionRecord? = null
         try {
@@ -104,6 +105,7 @@ class SafeTextWriteRepository(
         }
     }
 
+    override
     suspend fun recover(): List<TextRecoveryResult> = withContext(Dispatchers.IO) {
         journal.list().map { record -> recoverRecord(record) }
     }

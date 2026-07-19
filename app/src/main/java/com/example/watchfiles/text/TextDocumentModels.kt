@@ -10,6 +10,16 @@ data class TextSegment(
     val hasNext: Boolean,
 )
 
+interface TextReaderGateway {
+    suspend fun open(path: Path): TextOpenResult
+    suspend fun readSegment(path: Path, startByte: Long): TextSegment
+    suspend fun readEditable(path: Path): String
+}
+
+fun interface TextDigestProvider {
+    suspend fun digest(path: Path): String
+}
+
 sealed interface TextOpenResult {
     data class Ready(
         val sizeBytes: Long,
@@ -54,6 +64,11 @@ sealed interface TextWriteResult {
     data class Success(val target: Path) : TextWriteResult
     data class Failure(val userMessage: String, val technicalMessage: String? = null) : TextWriteResult
     data object Cancelled : TextWriteResult
+}
+
+interface TextWriteGateway {
+    suspend fun save(request: TextWriteRequest): TextWriteResult
+    suspend fun recover(): List<TextRecoveryResult>
 }
 
 enum class TextTransactionPhase { STAGED, BACKED_UP, PUBLISHED, CLEANED }

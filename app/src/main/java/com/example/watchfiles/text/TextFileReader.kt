@@ -12,7 +12,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 
-class TextFileReader {
+class TextFileReader : TextReaderGateway {
+    override
     suspend fun open(path: Path): TextOpenResult = withContext(Dispatchers.IO) {
         try {
             if (!isSimpleTextPath(path)) {
@@ -43,6 +44,7 @@ class TextFileReader {
         }
     }
 
+    override
     suspend fun readSegment(path: Path, startByte: Long): TextSegment = withContext(Dispatchers.IO) {
         val sizeBytes = Files.size(path)
         if (!isSimpleTextPath(path)) {
@@ -54,6 +56,7 @@ class TextFileReader {
         readSegmentInternal(path, sizeBytes, startByte.coerceIn(0L, sizeBytes))
     }
 
+    override
     suspend fun readEditable(path: Path): String = withContext(Dispatchers.IO) {
         if (!isSimpleTextPath(path)) {
             throw UnsupportedTextException("不是受支持的简单纯文本")
