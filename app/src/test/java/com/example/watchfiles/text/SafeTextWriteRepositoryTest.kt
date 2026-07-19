@@ -148,6 +148,125 @@ class SafeTextWriteRepositoryTest {
         assertOwnedTempsCleared(source.parent!!)
     }
 
+    @Test
+    fun stagedTransactionDeletesOnlyItsTempFile() = runTest {
+        val target = file("target.txt", "original")
+        val ownedTemp = target.parent!!.resolve(".watchfiles-text-owned.part")
+        val userPart = target.parent!!.resolve("notes.part")
+        Files.write(ownedTemp, bytes("draft"))
+        Files.write(userPart, bytes("user file"))
+        val journal = MemoryTextTransactionJournal()
+        journal.upsert(
+            record(
+                target = target,
+                temp = ownedTemp,
+                backup = null,
+                expectedTargetDigest = sha256Text("new"),
+                phase = TextTransactionPhase.STAGED,
+            ),
+        )
+
+        val result = SafeTextWriteRepository(journal).recover()
+
+        assertTrue(result.single() is TextRecoveryResult.Recovered)
+        assertFalse(Files.exists(ownedTemp))
+        assertTrue(Files.exists(userPart))
+        assertEquals("original", read(target))
+    }
+
+    @Test
+    fun backedUpTransactionRestoresMissingTarget() = runTest {
+        val target = temporaryFolder.root.toPath().resolve("target.txt")
+        val backup = temporaryFolder.root.toPath().resolve(".watchfiles-text-backup.backup")
+        Files.write(backup, bytes("original"))
+        val journal = MemoryTextTransactionJournal()
+        journal.upsert(
+            record(
+                target = target,
+                temp = temporaryFolder.root.toPath().resolve("missing.part"),
+                backup = backup,
+                expectedTargetDigest = sha256Text("new"),
+                phase = TextTransactionPhase.BACKED_UP,
+            ),
+        )
+
+        val result = SafeTextWriteRepository(journal).recover()
+
+        assertTrue(result.single() is TextRecoveryResult.Recovered)
+        assertEquals("original", read(target))
+        assertFalse(Files.exists(backup))
+        assertTrue(journal.list().isEmpty())
+    }
+
+    @Test
+    fun backedUpTransactionWithExpectedTargetCleansBackup() = runTest {
+        val target = file("target.txt", "new")
+        val backup = file(".watchfiles-text-backup.backup", "original")
+        val journal = MemoryTextTransactionJournal()
+        journal.upsert(
+            record(
+                target = target,
+                temp = temporaryFolder.root.toPath().resolve("missing.part"),
+                backup = backup,
+                expectedTargetDigest = sha256Text("new"),
+                phase = TextTransactionPhase.BACKED_UP,
+            ),
+        )
+
+        val result = SafeTextWriteRepository(journal).recover()
+
+        assertTrue(result.single() is TextRecoveryResult.Recovered)
+        assertEquals("new", read(target))
+        assertFalse(Files.exists(backup))
+        assertTrue(journal.list().isEmpty())
+    }
+
+    @Test
+    fun ambiguousRecoveryKeepsBackupAndJournal() = runTest {
+        val target = file("target.txt", "unexpected")
+        val backup = file(".watchfiles-text-backup.backup", "original")
+        val journal = MemoryTextTransactionJournal()
+        val record = record(
+            target = target,
+            temp = temporaryFolder.root.toPath().resolve("missing.part"),
+            backup = backup,
+            expectedTargetDigest = sha256Text("new"),
+            phase = TextTransactionPhase.BACKED_UP,
+        )
+        journal.upsert(record)
+
+        val result = SafeTextWriteRepository(journal).recover()
+
+        assertTrue(result.single() is TextRecoveryResult.Failed)
+        assertTrue(Files.exists(backup))
+        assertEquals(listOf(record), journal.list())
+    }
+
+    @Test
+    fun recoveryNeverDeletesUnownedPartOrBackupFile() = runTest {
+        val parent = temporaryFolder.root.toPath()
+        val userPart = file("user.part", "part")
+        val userBackup = file("user.backup", "backup")
+        val journal = MemoryTextTransactionJournal()
+        val ownedTemp = parent.resolve(".watchfiles-text-owned.part")
+        Files.write(ownedTemp, bytes("owned"))
+        journal.upsert(
+            record(
+                target = parent.resolve("target.txt"),
+                temp = ownedTemp,
+                backup = null,
+                expectedTargetDigest = sha256Text("new"),
+                phase = TextTransactionPhase.STAGED,
+            ),
+        )
+
+        SafeTextWriteRepository(journal).recover()
+
+        assertTrue(Files.exists(userPart))
+        assertTrue(Files.exists(userBackup))
+        assertFalse(Files.exists(ownedTemp))
+    }
+
     private fun repository(faultPoint: TextWriteFaultPoint? = null): SafeTextWriteRepository {
         return SafeTextWriteRepository(
             journal = MemoryTextTransactionJournal(),
@@ -184,6 +303,25 @@ class SafeTextWriteRepositoryTest {
     private fun sha256(path: Path): String = MessageDigest.getInstance("SHA-256")
         .digest(Files.readAllBytes(path))
         .joinToString("") { "%02x".format(it) }
+
+    private fun sha256Text(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes(value))
+        .joinToString("") { "%02x".format(it) }
+
+    private fun record(
+        target: Path,
+        temp: Path,
+        backup: Path?,
+        expectedTargetDigest: String,
+        phase: TextTransactionPhase,
+    ) = TextTransactionRecord(
+        id = target.fileName.toString() + phase.name,
+        target = target,
+        temp = temp,
+        backup = backup,
+        expectedTargetDigest = expectedTargetDigest,
+        phase = phase,
+    )
 
     private fun assertOwnedTempsCleared(parent: Path) {
         Files.list(parent).use { paths ->
