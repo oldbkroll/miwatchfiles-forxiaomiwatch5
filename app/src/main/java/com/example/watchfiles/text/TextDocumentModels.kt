@@ -27,3 +27,47 @@ data class TextDocumentSnapshot(
     val sizeBytes: Long,
     val sha256: String,
 )
+
+data class TextWriteRequest(
+    val source: Path,
+    val currentDirectory: Path,
+    val targetName: String,
+    val content: String,
+    val expectedSourceDigest: String,
+    val overwriteConfirmed: Boolean,
+)
+
+enum class TextWriteFaultPoint {
+    CREATE_TEMP,
+    WRITE_TEMP,
+    FORCE_TEMP,
+    MOVE_TARGET_TO_BACKUP,
+    MOVE_TEMP_TO_TARGET,
+    VERIFY_TARGET,
+}
+
+fun interface TextWriteFaultInjector {
+    fun throwIfRequested(point: TextWriteFaultPoint)
+}
+
+sealed interface TextWriteResult {
+    data class Success(val target: Path) : TextWriteResult
+    data class Failure(val userMessage: String, val technicalMessage: String? = null) : TextWriteResult
+    data object Cancelled : TextWriteResult
+}
+
+enum class TextTransactionPhase { STAGED, BACKED_UP, PUBLISHED, CLEANED }
+
+data class TextTransactionRecord(
+    val id: String,
+    val target: Path,
+    val temp: Path,
+    val backup: Path?,
+    val expectedTargetDigest: String,
+    val phase: TextTransactionPhase,
+)
+
+sealed interface TextRecoveryResult {
+    data class Recovered(val id: String) : TextRecoveryResult
+    data class Failed(val id: String, val message: String) : TextRecoveryResult
+}
