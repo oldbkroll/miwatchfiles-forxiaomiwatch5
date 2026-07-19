@@ -105,6 +105,9 @@ import com.example.watchfiles.fileops.FileOperationType
 import com.example.watchfiles.fileops.TargetDirectoryViewModel
 import com.example.watchfiles.image.DecodedImage
 import com.example.watchfiles.image.decodeLowMemoryImage
+import com.example.watchfiles.text.TextDocumentMode
+import com.example.watchfiles.text.TextDocumentScreen
+import com.example.watchfiles.text.TextDocumentViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.nio.file.Path
@@ -116,6 +119,7 @@ private enum class AppScreen {
     HOME,
     BROWSER,
     FILE_DETAILS,
+    TEXT_DOCUMENT,
     IMAGE_VIEWER,
     DEVICE_INFO,
     NAME_EDITOR,
@@ -158,6 +162,9 @@ class MainActivity : ComponentActivity() {
     private val browserViewModel by viewModels<FileBrowserViewModel>()
     private val targetDirectoryViewModel by viewModels<TargetDirectoryViewModel>()
     private val fileOperationCoordinator by viewModels<FileOperationCoordinator>()
+    private val textDocumentViewModel by viewModels<TextDocumentViewModel> {
+        TextDocumentViewModel.Factory(applicationContext)
+    }
     private var hasStorageAccess by mutableStateOf(false)
     private val storagePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -168,6 +175,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         updatePermissionState()
+        textDocumentViewModel.recoverTransactions()
         setContent {
             WatchFilesTheme {
                 WatchFilesApp(
@@ -178,6 +186,7 @@ class MainActivity : ComponentActivity() {
                     browserViewModel = browserViewModel,
                     targetDirectoryViewModel = targetDirectoryViewModel,
                     fileOperationCoordinator = fileOperationCoordinator,
+                    textDocumentViewModel = textDocumentViewModel,
                 )
             }
         }
@@ -265,6 +274,7 @@ private fun WatchFilesApp(
     browserViewModel: FileBrowserViewModel,
     targetDirectoryViewModel: TargetDirectoryViewModel,
     fileOperationCoordinator: FileOperationCoordinator,
+    textDocumentViewModel: TextDocumentViewModel,
 ) {
     if (!hasStorageAccess) {
         PermissionScreen(onRequestPermission, onOpenAppSettings)
@@ -277,6 +287,7 @@ private fun WatchFilesApp(
     val browserState by browserViewModel.state.collectAsState()
     val targetState by targetDirectoryViewModel.state.collectAsState()
     val operationState by fileOperationCoordinator.state.collectAsState()
+    val textState by textDocumentViewModel.state.collectAsState()
     var pendingOperationSources by remember { mutableStateOf<List<Path>>(emptyList()) }
     var pendingOperationType by remember { mutableStateOf(FileOperationType.COPY) }
     val browserListState = rememberScalingLazyListState()
@@ -326,6 +337,7 @@ private fun WatchFilesApp(
                 }
             }
             AppScreen.FILE_DETAILS -> screen = AppScreen.BROWSER
+            AppScreen.TEXT_DOCUMENT -> Unit
             AppScreen.IMAGE_VIEWER -> screen = AppScreen.FILE_DETAILS
             AppScreen.DEVICE_INFO -> screen = AppScreen.HOME
             AppScreen.NAME_EDITOR -> {
@@ -420,6 +432,10 @@ private fun WatchFilesApp(
             FileDetailsScreen(
                 entry = entry,
                 onOpenFile = onOpenFile,
+                onOpenText = {
+                    textDocumentViewModel.open(it.path)
+                    screen = AppScreen.TEXT_DOCUMENT
+                },
                 onPreviewImage = {
                     selectedFile = it
                     screen = AppScreen.IMAGE_VIEWER
@@ -429,6 +445,19 @@ private fun WatchFilesApp(
         } ?: HomeScreen(
             onOpenDirectory = openBrowserDirectory,
             onOpenDeviceInfo = { screen = AppScreen.DEVICE_INFO },
+        )
+        AppScreen.TEXT_DOCUMENT -> TextDocumentScreen(
+            state = textState,
+            onNextSegment = textDocumentViewModel::nextSegment,
+            onPreviousSegment = textDocumentViewModel::previousSegment,
+            onBeginEditing = textDocumentViewModel::beginEditing,
+            onUpdateDraft = textDocumentViewModel::updateDraft,
+            onRequestOverwriteConfirmation = textDocumentViewModel::requestOverwriteConfirmation,
+            onRequestSaveAs = textDocumentViewModel::requestSaveAs,
+            onConfirmSave = textDocumentViewModel::confirmSave,
+            onCancelSave = textDocumentViewModel::cancelSave,
+            onDiscardChanges = textDocumentViewModel::discardChanges,
+            onNavigateBack = { screen = AppScreen.FILE_DETAILS },
         )
         AppScreen.IMAGE_VIEWER -> selectedFile?.let { entry ->
             ImageViewerScreen(
@@ -841,6 +870,7 @@ private fun FileNameEditorScreen(
 private fun FileDetailsScreen(
     entry: FileEntry,
     onOpenFile: (Path, String) -> String?,
+    onOpenText: (FileEntry) -> Unit,
     onPreviewImage: (FileEntry) -> Unit,
     onNavigateBack: () -> Unit,
 ) {
@@ -874,6 +904,16 @@ private fun FileDetailsScreen(
                 )
             }
         } else {
+            if (typeInfo.category == com.example.watchfiles.data.FileCategory.TEXT) {
+                item {
+                    AppChip(
+                        label = "查看文本",
+                        secondary = "UTF-8 分段查看与编辑",
+                        enabled = entry.isReadable,
+                        onClick = { onOpenText(entry) },
+                    )
+                }
+            }
             item {
                 AppChip(
                     label = "打开",

@@ -45,6 +45,9 @@ fun identifyFileType(path: Path): FileTypeInfo {
 }
 
 private val knownMimeTypes = mapOf(
+    "log" to "text/plain",
+    "text" to "text/plain",
+    "txt" to "text/plain",
     "apk" to "application/vnd.android.package-archive",
     "csv" to "text/csv",
     "flac" to "audio/flac",

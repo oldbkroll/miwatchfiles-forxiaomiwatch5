@@ -243,6 +243,28 @@ class SafeTextWriteRepositoryTest {
     }
 
     @Test
+    fun publishedRecoveryWithUnexpectedTargetKeepsBothFiles() = runTest {
+        val target = file("target.txt", "unexpected")
+        val backup = file(".watchfiles-text-backup.backup", "original")
+        val journal = MemoryTextTransactionJournal()
+        val record = record(
+            target = target,
+            temp = temporaryFolder.root.toPath().resolve("missing.part"),
+            backup = backup,
+            expectedTargetDigest = sha256Text("new"),
+            phase = TextTransactionPhase.PUBLISHED,
+        )
+        journal.upsert(record)
+
+        val result = SafeTextWriteRepository(journal).recover()
+
+        assertTrue(result.single() is TextRecoveryResult.Failed)
+        assertEquals("unexpected", read(target))
+        assertEquals("original", read(backup))
+        assertEquals(listOf(record), journal.list())
+    }
+
+    @Test
     fun recoveryNeverDeletesUnownedPartOrBackupFile() = runTest {
         val parent = temporaryFolder.root.toPath()
         val userPart = file("user.part", "part")

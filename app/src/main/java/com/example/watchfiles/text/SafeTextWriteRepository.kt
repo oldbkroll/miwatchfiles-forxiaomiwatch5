@@ -200,14 +200,8 @@ class SafeTextWriteRepository(
                         Files.deleteIfExists(record.temp)
                         journal.remove(record.id)
                         TextRecoveryResult.Recovered(record.id)
-                    } else if (record.backup != null && Files.exists(record.backup, NOFOLLOW_LINKS)) {
-                        Files.deleteIfExists(record.target)
-                        Files.move(record.backup, record.target)
-                        Files.deleteIfExists(record.temp)
-                        journal.remove(record.id)
-                        TextRecoveryResult.Recovered(record.id)
                     } else {
-                        TextRecoveryResult.Failed(record.id, "未能安全恢复文本事务")
+                        TextRecoveryResult.Failed(record.id, "目标摘要不一致，保留目标与 backup 供人工检查")
                     }
                 }
                 TextTransactionPhase.CLEANED -> {

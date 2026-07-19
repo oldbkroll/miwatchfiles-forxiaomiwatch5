@@ -1,9 +1,12 @@
 package com.example.watchfiles.text
 
+import android.content.Context
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.watchfiles.fileops.FileNameRules
 import com.example.watchfiles.fileops.FileNameValidation
+import kotlinx.coroutines.CancellationException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -33,6 +36,7 @@ data class TextDocumentUiState(
     val originalSha256: String? = null,
     val isDirty: Boolean = false,
     val pendingTargetName: String? = null,
+    val targetExists: Boolean = false,
     val saveConfirmation: TextSaveConfirmation = TextSaveConfirmation.NONE,
     val message: String? = null,
 )
@@ -59,30 +63,39 @@ class TextDocumentViewModel(
         segmentStarts = mutableListOf(0L)
         _state.value = TextDocumentUiState(path = path, mode = TextDocumentMode.LOADING)
         loadJob = viewModelScope.launch {
-            when (val result = reader.open(path)) {
-                is TextOpenResult.Ready -> {
-                    val sha = if (result.editable) digestProvider.digest(path) else null
-                    _state.update {
-                        it.copy(
-                            mode = TextDocumentMode.VIEWING,
-                            segment = result.firstSegment,
-                            sizeBytes = result.sizeBytes,
-                            editable = result.editable,
-                            editDisabledReason = result.editDisabledReason,
-                            originalSha256 = sha,
-                            message = null,
-                        )
+            try {
+                val recoveryMessage = recoveryMessage()
+                when (val result = reader.open(path)) {
+                    is TextOpenResult.Ready -> {
+                        val sha = if (result.editable) digestProvider.digest(path) else null
+                        _state.update {
+                            it.copy(
+                                mode = TextDocumentMode.VIEWING,
+                                segment = result.firstSegment,
+                                sizeBytes = result.sizeBytes,
+                                editable = result.editable,
+                                editDisabledReason = result.editDisabledReason,
+                                originalSha256 = sha,
+                                message = recoveryMessage,
+                            )
+                        }
+                    }
+                    is TextOpenResult.Unsupported -> {
+                        _state.update {
+                            it.copy(mode = TextDocumentMode.FAILED, message = result.message)
+                        }
+                    }
+                    is TextOpenResult.Failed -> {
+                        _state.update {
+                            it.copy(mode = TextDocumentMode.FAILED, message = result.message)
+                        }
                     }
                 }
-                is TextOpenResult.Unsupported -> {
-                    _state.update {
-                        it.copy(mode = TextDocumentMode.FAILED, message = result.message)
-                    }
-                }
-                is TextOpenResult.Failed -> {
-                    _state.update {
-                        it.copy(mode = TextDocumentMode.FAILED, message = result.message)
-                    }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(mode = TextDocumentMode.FAILED, message = error.userMessage("无法读取文本文件"))
                 }
             }
         }
@@ -94,9 +107,15 @@ class TextDocumentViewModel(
         val segment = current.segment ?: return
         if (!segment.hasNext || current.mode != TextDocumentMode.VIEWING) return
         viewModelScope.launch {
-            val next = reader.readSegment(path, segment.endByte)
-            segmentStarts += next.startByte
-            _state.update { it.copy(segment = next, message = null) }
+            try {
+                val next = reader.readSegment(path, segment.endByte)
+                segmentStarts += next.startByte
+                _state.update { it.copy(segment = next, message = null) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _state.update { it.copy(message = error.userMessage("无法读取下一段文本")) }
+            }
         }
     }
 
@@ -104,11 +123,17 @@ class TextDocumentViewModel(
         val current = _state.value
         val path = current.path ?: return
         if (current.mode != TextDocumentMode.VIEWING || segmentStarts.size < 2) return
-        segmentStarts.removeAt(segmentStarts.lastIndex)
-        val previousStart = segmentStarts.last()
+        val previousStart = segmentStarts[segmentStarts.lastIndex - 1]
         viewModelScope.launch {
-            val previous = reader.readSegment(path, previousStart)
-            _state.update { it.copy(segment = previous, message = null) }
+            try {
+                val previous = reader.readSegment(path, previousStart)
+                segmentStarts.removeAt(segmentStarts.lastIndex)
+                _state.update { it.copy(segment = previous, message = null) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _state.update { it.copy(message = error.userMessage("无法读取上一段文本")) }
+            }
         }
     }
 
@@ -117,17 +142,23 @@ class TextDocumentViewModel(
         val path = current.path ?: return
         if (!current.editable || current.mode != TextDocumentMode.VIEWING) return
         viewModelScope.launch {
-            val content = reader.readEditable(path)
-            val digest = digestProvider.digest(path)
-            _state.update {
-                it.copy(
-                    mode = TextDocumentMode.EDITING,
-                    draft = content,
-                    originalContent = content,
-                    originalSha256 = digest,
-                    isDirty = false,
-                    message = null,
-                )
+            try {
+                val content = reader.readEditable(path)
+                val digest = digestProvider.digest(path)
+                _state.update {
+                    it.copy(
+                        mode = TextDocumentMode.EDITING,
+                        draft = content,
+                        originalContent = content,
+                        originalSha256 = digest,
+                        isDirty = false,
+                        message = null,
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _state.update { it.copy(message = error.userMessage("无法载入可编辑文本")) }
             }
         }
     }
@@ -150,6 +181,7 @@ class TextDocumentViewModel(
         _state.update {
             it.copy(
                 pendingTargetName = path.fileName?.toString(),
+                targetExists = true,
                 saveConfirmation = TextSaveConfirmation.OVERWRITE,
                 message = null,
             )
@@ -177,6 +209,7 @@ class TextDocumentViewModel(
         _state.update {
             it.copy(
                 pendingTargetName = name,
+                targetExists = Files.exists(target, NOFOLLOW_LINKS),
                 saveConfirmation = TextSaveConfirmation.SAVE_AS,
                 message = null,
             )
@@ -193,6 +226,11 @@ class TextDocumentViewModel(
             it.copy(mode = TextDocumentMode.SAVING, saveConfirmation = TextSaveConfirmation.NONE)
         }
         viewModelScope.launch {
+            val recoveryMessage = recoveryMessage()
+            if (recoveryMessage != null) {
+                _state.update { it.copy(message = recoveryMessage) }
+                return@launch
+            }
             when (val result = writer.save(
                 TextWriteRequest(
                     source = source,
@@ -210,6 +248,7 @@ class TextDocumentViewModel(
                             isDirty = false,
                             originalContent = current.draft,
                             pendingTargetName = null,
+                            targetExists = false,
                             message = if (result.target == source) "已保存" else "已另存为 ${result.target.fileName}",
                         )
                     }
@@ -219,6 +258,7 @@ class TextDocumentViewModel(
                         it.copy(
                             mode = TextDocumentMode.EDITING,
                             pendingTargetName = null,
+                            targetExists = false,
                             message = result.userMessage,
                         )
                     }
@@ -228,6 +268,7 @@ class TextDocumentViewModel(
                         it.copy(
                             mode = TextDocumentMode.EDITING,
                             pendingTargetName = null,
+                            targetExists = false,
                             message = "保存已取消",
                         )
                     }
@@ -238,7 +279,11 @@ class TextDocumentViewModel(
 
     fun cancelSave() {
         _state.update {
-            it.copy(saveConfirmation = TextSaveConfirmation.NONE, pendingTargetName = null)
+            it.copy(
+                saveConfirmation = TextSaveConfirmation.NONE,
+                pendingTargetName = null,
+                targetExists = false,
+            )
         }
     }
 
@@ -250,9 +295,50 @@ class TextDocumentViewModel(
                 draft = current.originalContent.orEmpty(),
                 isDirty = false,
                 pendingTargetName = null,
+                targetExists = false,
                 saveConfirmation = TextSaveConfirmation.NONE,
                 message = null,
             )
         }
     }
+
+    fun recoverTransactions() {
+        viewModelScope.launch {
+            recoveryMessage()?.let { message ->
+                _state.update {
+                    it.copy(message = message)
+                }
+            }
+        }
+    }
+
+    private suspend fun recoveryMessage(): String? {
+        return try {
+            val failures = writer.recover().filterIsInstance<TextRecoveryResult.Failed>()
+            if (failures.isEmpty()) null else "有 ${failures.size} 个文本保存事务需要检查"
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            "文本事务恢复失败，请检查后重试"
+        }
+    }
+
+    class Factory(private val context: Context) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            val appContext = context.applicationContext
+            val preferences = appContext.getSharedPreferences(
+                "watchfiles_text_transactions",
+                Context.MODE_PRIVATE,
+            )
+            val journal = SharedPreferencesTextTransactionJournal(preferences)
+            return TextDocumentViewModel(
+                reader = TextFileReader(),
+                writer = SafeTextWriteRepository(journal),
+            ) as T
+        }
+    }
 }
+
+private fun Throwable.userMessage(fallback: String): String =
+    message?.takeIf { it.isNotBlank() } ?: fallback

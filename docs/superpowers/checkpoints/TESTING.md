@@ -48,7 +48,7 @@ M1B 完整实测记录见 [`2026-07-16-m1b-closeout.md`](2026-07-16-m1b-closeout
 
 启动基线属于只读 B 级检查，不创建、删除或修改真机文件。每个设备会话先动态运行 `adb devices -l` 和 `adb mdns services`，只使用当次在线的 `M2505W1/grasslte` serial，不复用历史地址。
 
-1. 冷启动测试前执行 `adb -s <当次在线 serial> shell am force-stop com.example.watchfiles.debug`，再执行 `adb -s <当次在线 serial> shell am start -W -n com.example.watchfiles.debug/.MainActivity`；记录到首屏可交互的时间。冷启动至少重复 5 次。
+1. 冷启动测试前执行 `adb -s <当次在线 serial> shell am force-stop com.example.watchfiles.debug`，再执行 `adb -s <当次在线 serial> shell am start -W -n com.example.watchfiles.debug/com.example.watchfiles.MainActivity`；记录到首屏可交互的时间。冷启动至少重复 5 次。
 2. 从后台重新打开应用，记录热启动到首屏可交互的时间，至少重复 5 次；分别保留中位数和最慢值。
 3. 从主页进入目录，记录目录列表可见时间；对普通目录和受控的大目录各重复 5 次。不得为了启动基线在真机创建大目录。
 4. 记录主页、目录页和图片查看页的 `dumpsys meminfo com.example.watchfiles.debug` PSS；连续进入/退出图片页 5 次，确认内存没有持续上涨。
@@ -57,6 +57,10 @@ M1B 完整实测记录见 [`2026-07-16-m1b-closeout.md`](2026-07-16-m1b-closeout
 7. 使用“另存为”输入新文件名，只允许写入当前目录；新文件内容与编辑内容一致，原文件保持不变。输入当前目录已有名称时必须出现同名冲突确认，取消后两份原内容都保持不变。
 8. 测试超出可安全编辑范围的文本和无法识别/不支持编码的文件；应用应保持只读或显示明确提示，不应强行载入、卡死或崩溃。
 9. 文本覆盖和另存为属于 C 级真实写入，验收时记录源/目标内容或 SHA-256、取消结果、失败结果和临时文件清理；不得使用 M1Sandbox 之外的路径。
+
+实现边界：文本页按约 32 KiB UTF-8 安全边界分段；超过 16 MiB 的简单文本不打开，超过 512 KiB 的文本只读；非法 UTF-8 不使用替换字符。覆盖和另存为均要求源摘要仍匹配、目标在当前目录、目标不是符号链接，并通过同目录 `.watchfiles-text-*.part`/`.backup` 事务文件发布；同名目标必须单独确认。
+
+本阶段自动化重点：`TextFileReaderTest` 覆盖大小、扩展名、换行、Unicode 边界和非法 UTF-8；`SafeTextWriteRepositoryTest` 覆盖覆盖/另存为、摘要冲突、故障注入、取消、事务恢复和只清理自有临时文件；`TextDocumentViewModelTest` 覆盖分页、只读、草稿、确认、取消和保存失败状态。实际设备验收记录见 [`2026-07-19-m2-closeout.md`](2026-07-19-m2-closeout.md)。
 
 M2 不开发内置音频播放器；音频和视频继续通过“用其他应用打开”。内置视频播放、ZIP 查看和 ZIP 解压属于 M4 可选评估，不纳入本阶段验收。
 
