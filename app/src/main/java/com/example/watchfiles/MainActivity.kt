@@ -115,7 +115,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class AppScreen {
+internal enum class AppScreen {
     HOME,
     BROWSER,
     FILE_DETAILS,
@@ -126,6 +126,19 @@ private enum class AppScreen {
     TARGET_DIRECTORY,
     DELETE_CONFIRMATION,
     FILE_OPERATION,
+}
+
+internal fun operationScreenForState(state: FileOperationState): AppScreen? = when (state) {
+    is FileOperationState.WaitingForDeleteConfirmation -> AppScreen.DELETE_CONFIRMATION
+    is FileOperationState.Scanning,
+    is FileOperationState.Running,
+    is FileOperationState.WaitingForReplacement,
+    is FileOperationState.Cancelling -> AppScreen.FILE_OPERATION
+    FileOperationState.Idle,
+    is FileOperationState.Succeeded,
+    is FileOperationState.PartiallySucceeded,
+    is FileOperationState.Failed,
+    is FileOperationState.Cancelled -> null
 }
 
 private sealed interface NameEditorRequest {
@@ -161,7 +174,9 @@ private val TopArcButtonShape = GenericShape { size, _ ->
 class MainActivity : ComponentActivity() {
     private val browserViewModel by viewModels<FileBrowserViewModel>()
     private val targetDirectoryViewModel by viewModels<TargetDirectoryViewModel>()
-    private val fileOperationCoordinator by viewModels<FileOperationCoordinator>()
+    private val fileOperationCoordinator by viewModels<FileOperationCoordinator> {
+        FileOperationCoordinator.Factory(applicationContext)
+    }
     private val textDocumentViewModel by viewModels<TextDocumentViewModel> {
         TextDocumentViewModel.Factory(applicationContext)
     }
@@ -325,6 +340,10 @@ private fun WatchFilesApp(
             screen = AppScreen.BROWSER
             browserViewModel.consumeMutationResult()
         }
+    }
+
+    LaunchedEffect(operationState) {
+        operationScreenForState(operationState)?.let { screen = it }
     }
 
     BackHandler(enabled = screen != AppScreen.HOME) {
