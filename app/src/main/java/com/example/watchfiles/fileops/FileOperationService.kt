@@ -17,6 +17,26 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+class FileOperationStateCollectionController(
+    private val scope: CoroutineScope,
+    private val state: StateFlow<FileOperationState>,
+    private val onState: (FileOperationState) -> Unit,
+) {
+    private var collectionJob: Job? = null
+
+    fun ensureActive() {
+        if (collectionJob?.isActive == true) return
+        collectionJob = scope.launch { state.collect(onState) }
+    }
+
+    fun stop() {
+        collectionJob?.cancel()
+        collectionJob = null
+    }
+
+    fun close() = stop()
+}
+
 interface FileOperationServicePort {
     val state: StateFlow<FileOperationState>
 
@@ -63,7 +83,7 @@ class FileOperationService : Service(), FileOperationServicePort {
     private lateinit var adapter: FileOperationServicePortAdapter
     private lateinit var notificationManager: NotificationManager
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var stateCollection: Job? = null
+    private lateinit var stateCollection: FileOperationStateCollectionController
     private var foregroundStarted = false
     private val binder = LocalBinder()
 
@@ -76,9 +96,8 @@ class FileOperationService : Service(), FileOperationServicePort {
         adapter = FileOperationServicePortAdapter(runner, ::ensureForeground)
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
-        stateCollection = serviceScope.launch {
-            state.collect(::publishState)
-        }
+        stateCollection = FileOperationStateCollectionController(serviceScope, state, ::publishState)
+        stateCollection.ensureActive()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -109,7 +128,7 @@ class FileOperationService : Service(), FileOperationServicePort {
     override fun consumeResult() = adapter.consumeResult()
 
     override fun onDestroy() {
-        stateCollection?.cancel()
+        stateCollection.close()
         serviceScope.cancel()
         runner.close()
         super.onDestroy()
@@ -122,7 +141,7 @@ class FileOperationService : Service(), FileOperationServicePort {
             stopForegroundIfStarted()
         }
         if (state.isTerminal()) {
-            stateCollection?.cancel()
+            stateCollection.stop()
             notificationManager.cancel(NOTIFICATION_ID)
             stopForegroundIfStarted()
             stopSelf()
@@ -130,6 +149,7 @@ class FileOperationService : Service(), FileOperationServicePort {
     }
 
     private fun ensureForeground(type: FileOperationType) {
+        stateCollection.ensureActive()
         if (foregroundStarted) return
         val content = notificationContentFor(FileOperationState.Scanning(type)) ?: return
         startForeground(NOTIFICATION_ID, buildNotification(content))

@@ -1,8 +1,11 @@
 package com.example.watchfiles.fileops
 
 import java.nio.file.Paths
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -10,6 +13,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FileOperationServiceTest {
     private val source = Paths.get("/source.txt")
     private val target = Paths.get("/target")
@@ -75,6 +79,54 @@ class FileOperationServiceTest {
         assertTrue(adapter.start(FileOperationType.COPY, listOf(source), target))
 
         assertEquals(listOf("foreground", "runner.start"), events)
+    }
+
+    @Test fun stateCollectionRestartsAfterTerminalStopForNextTask() = runTest {
+        val state = MutableStateFlow<FileOperationState>(FileOperationState.Idle)
+        val observed = mutableListOf<FileOperationState>()
+        val firstTask = FileOperationState.Running(
+            FileOperationType.COPY,
+            OperationProgress("first.txt", 1, 2, 1, 2),
+        )
+        val secondTask = FileOperationState.Running(
+            FileOperationType.MOVE,
+            OperationProgress("second.txt", 1, 2, 1, 2),
+        )
+        val controller = FileOperationStateCollectionController(this, state, observed::add)
+
+        controller.ensureActive()
+        runCurrent()
+        state.value = firstTask
+        runCurrent()
+        controller.stop()
+
+        state.value = FileOperationState.Idle
+        controller.ensureActive()
+        runCurrent()
+        state.value = secondTask
+        runCurrent()
+
+        assertEquals(listOf(FileOperationState.Idle, firstTask, FileOperationState.Idle, secondTask), observed)
+        controller.close()
+    }
+
+    @Test fun stateCollectionDoesNotDuplicateWhileAlreadyActive() = runTest {
+        val state = MutableStateFlow<FileOperationState>(FileOperationState.Idle)
+        val observed = mutableListOf<FileOperationState>()
+        val running = FileOperationState.Running(
+            FileOperationType.COPY,
+            OperationProgress("source.txt", 1, 1, 1, 1),
+        )
+        val controller = FileOperationStateCollectionController(this, state, observed::add)
+
+        controller.ensureActive()
+        controller.ensureActive()
+        runCurrent()
+        state.value = running
+        runCurrent()
+
+        assertEquals(listOf(FileOperationState.Idle, running), observed)
+        controller.close()
     }
 
     private class RecordingRunnerPort(
