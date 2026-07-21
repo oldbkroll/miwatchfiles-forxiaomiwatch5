@@ -140,6 +140,27 @@ class TextDocumentViewModelTest {
     }
 
     @Test
+    fun saveSuccessRefreshesViewingContentAndMetadata() = runTest(mainDispatcherRule.dispatcher) {
+        val path = file("refresh-after-save.txt", "original")
+        val viewModel = viewModel(WritingWriter())
+
+        viewModel.open(path)
+        advanceUntilIdle()
+        viewModel.beginEditing()
+        advanceUntilIdle()
+        viewModel.updateDraft("changed")
+        viewModel.requestOverwriteConfirmation()
+        viewModel.confirmSave(overwriteConfirmed = true)
+        advanceUntilIdle()
+
+        assertEquals(TextDocumentMode.VIEWING, viewModel.state.value.mode)
+        assertEquals(path, viewModel.state.value.path)
+        assertEquals("changed", viewModel.state.value.segment?.text)
+        assertEquals(7L, viewModel.state.value.sizeBytes)
+        assertFalse(viewModel.state.value.isDirty)
+    }
+
+    @Test
     fun saveAsUsesCurrentDirectoryOnly() = runTest(mainDispatcherRule.dispatcher) {
         val path = file("save-as.txt", "original")
         val writer = RecordingWriter(TextWriteResult.Success(path))
@@ -182,6 +203,16 @@ class TextDocumentViewModelTest {
         override suspend fun save(request: TextWriteRequest): TextWriteResult {
             calls += 1
             return result
+        }
+
+        override suspend fun recover(): List<TextRecoveryResult> = emptyList()
+    }
+
+    private class WritingWriter : TextWriteGateway {
+        override suspend fun save(request: TextWriteRequest): TextWriteResult {
+            val target = request.currentDirectory.resolve(request.targetName)
+            Files.write(target, request.content.toByteArray(StandardCharsets.UTF_8))
+            return TextWriteResult.Success(target)
         }
 
         override suspend fun recover(): List<TextRecoveryResult> = emptyList()

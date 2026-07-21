@@ -242,16 +242,7 @@ class TextDocumentViewModel(
                 ),
             )) {
                 is TextWriteResult.Success -> {
-                    _state.update {
-                        it.copy(
-                            mode = TextDocumentMode.VIEWING,
-                            isDirty = false,
-                            originalContent = current.draft,
-                            pendingTargetName = null,
-                            targetExists = false,
-                            message = if (result.target == source) "已保存" else "已另存为 ${result.target.fileName}",
-                        )
-                    }
+                    refreshAfterSave(current, source, result)
                 }
                 is TextWriteResult.Failure -> {
                     _state.update {
@@ -274,6 +265,79 @@ class TextDocumentViewModel(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun refreshAfterSave(
+        current: TextDocumentUiState,
+        source: Path,
+        result: TextWriteResult.Success,
+    ) {
+        try {
+            when (val refreshed = reader.open(result.target)) {
+                is TextOpenResult.Ready -> {
+                    segmentStarts = mutableListOf(0L)
+                    val savedDigest = digestProvider.digest(result.target)
+                    _state.update {
+                        it.copy(
+                            path = result.target,
+                            mode = TextDocumentMode.VIEWING,
+                            segment = refreshed.firstSegment,
+                            sizeBytes = refreshed.sizeBytes,
+                            editable = refreshed.editable,
+                            editDisabledReason = refreshed.editDisabledReason,
+                            originalContent = current.draft,
+                            originalSha256 = savedDigest,
+                            isDirty = false,
+                            pendingTargetName = null,
+                            targetExists = false,
+                            message = if (result.target == source) "已保存" else "已另存为 ${result.target.fileName}",
+                        )
+                    }
+                }
+                is TextOpenResult.Unsupported -> markSaveRefreshFailure(
+                    result.target,
+                    current,
+                    refreshed.message,
+                )
+                is TextOpenResult.Failed -> markSaveRefreshFailure(
+                    result.target,
+                    current,
+                    refreshed.message,
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            markSaveRefreshFailure(
+                result.target,
+                current,
+                error.userMessage("请返回文件详情重试"),
+            )
+        }
+    }
+
+    private fun markSaveRefreshFailure(
+        target: Path,
+        current: TextDocumentUiState,
+        detail: String,
+    ) {
+        segmentStarts = mutableListOf(0L)
+        _state.update {
+            it.copy(
+                path = target,
+                mode = TextDocumentMode.FAILED,
+                segment = null,
+                sizeBytes = 0L,
+                editable = false,
+                editDisabledReason = detail,
+                originalContent = current.draft,
+                originalSha256 = null,
+                isDirty = false,
+                pendingTargetName = null,
+                targetExists = false,
+                message = "已保存，但无法重新打开文本：$detail",
+            )
         }
     }
 

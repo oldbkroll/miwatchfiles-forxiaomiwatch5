@@ -48,6 +48,8 @@ M1B 完整实测记录见 [`2026-07-16-m1b-closeout.md`](2026-07-16-m1b-closeout
 
 启动基线属于只读 B 级检查，不创建、删除或修改真机文件。每个设备会话先动态运行 `adb devices -l` 和 `adb mdns services`，只使用当次在线的 `M2505W1/grasslte` serial，不复用历史地址。
 
+页面定位优先使用 `adb -s <serial> exec-out uiautomator dump /dev/tty`，依据文本、控件 enabled 状态和 bounds 操作，减少重复截图。大文本页面的长文本属性可能使系统 XML 导出器因输出过大或非法 XML 字符退出；此时只对该页面使用一次截图确认可见状态，并另外检查应用进程、logcat 和文件哈希。
+
 1. 冷启动测试前执行 `adb -s <当次在线 serial> shell am force-stop com.example.watchfiles.debug`，再执行 `adb -s <当次在线 serial> shell am start -W -n com.example.watchfiles.debug/com.example.watchfiles.MainActivity`；记录到首屏可交互的时间。冷启动至少重复 5 次。
 2. 从后台重新打开应用，记录热启动到首屏可交互的时间，至少重复 5 次；分别保留中位数和最慢值。
 3. 从主页进入目录，记录目录列表可见时间；对普通目录和受控的大目录各重复 5 次。不得为了启动基线在真机创建大目录。
