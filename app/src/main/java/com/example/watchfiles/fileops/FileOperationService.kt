@@ -1,0 +1,180 @@
+package com.example.watchfiles.fileops
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Intent
+import android.os.Binder
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import java.nio.file.Path
+import java.nio.file.Paths
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+
+interface FileOperationServicePort {
+    val state: StateFlow<FileOperationState>
+
+    fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean
+    fun prepareDelete(sources: List<Path>): Boolean
+    fun confirmDelete(): Boolean
+    fun replaceAll()
+    fun cancel()
+    fun consumeResult()
+}
+
+class FileOperationServicePortAdapter(
+    private val runner: FileOperationRunnerPort,
+) : FileOperationServicePort {
+    override val state: StateFlow<FileOperationState> = runner.state
+
+    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
+        runner.start(type, sources, targetDirectory)
+
+    override fun prepareDelete(sources: List<Path>): Boolean = runner.prepareDelete(sources)
+
+    override fun confirmDelete(): Boolean = runner.confirmDelete()
+
+    override fun replaceAll() = runner.replaceAll()
+
+    override fun cancel() = runner.cancel()
+
+    override fun consumeResult() = runner.consumeResult()
+}
+
+class FileOperationService : Service(), FileOperationServicePort {
+    private lateinit var runner: FileOperationRunner
+    private lateinit var adapter: FileOperationServicePortAdapter
+    private lateinit var notificationManager: NotificationManager
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var stateCollection: Job? = null
+    private val binder = LocalBinder()
+
+    override val state: StateFlow<FileOperationState>
+        get() = adapter.state
+
+    override fun onCreate() {
+        super.onCreate()
+        runner = FileOperationRunner()
+        adapter = FileOperationServicePortAdapter(runner)
+        notificationManager = getSystemService(NotificationManager::class.java)
+        createNotificationChannel()
+        stateCollection = serviceScope.launch {
+            state.collect(::publishState)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action != ACTION_START || state.value != FileOperationState.Idle) return START_NOT_STICKY
+        val request = intent.toStartRequest() ?: return START_NOT_STICKY
+        startForeground(NOTIFICATION_ID, buildNotification(notificationContentFor(FileOperationState.Scanning(request.type))!!))
+        if (!start(request.type, request.sources, request.targetDirectory)) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
+        adapter.start(type, sources, targetDirectory)
+
+    override fun prepareDelete(sources: List<Path>): Boolean = adapter.prepareDelete(sources)
+
+    override fun confirmDelete(): Boolean = adapter.confirmDelete()
+
+    override fun replaceAll() = adapter.replaceAll()
+
+    override fun cancel() = adapter.cancel()
+
+    override fun consumeResult() = adapter.consumeResult()
+
+    override fun onDestroy() {
+        stateCollection?.cancel()
+        serviceScope.cancel()
+        runner.close()
+        super.onDestroy()
+    }
+
+    private fun publishState(state: FileOperationState) {
+        notificationContentFor(state)?.let { notificationManager.notify(NOTIFICATION_ID, buildNotification(it)) }
+        if (state.isTerminal()) {
+            stateCollection?.cancel()
+            notificationManager.cancel(NOTIFICATION_ID)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    private fun createNotificationChannel() {
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "文件操作",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            },
+        )
+    }
+
+    private fun buildNotification(content: FileOperationNotificationContent) =
+        NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(com.example.watchfiles.R.drawable.ic_app)
+            .setContentTitle(content.title)
+            .setContentText(content.text)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setOngoing(true)
+            .setProgress(content.totalItems ?: 0, content.processedItems ?: 0, content.totalItems == null)
+            .build()
+
+    private fun Intent.toStartRequest(): StartRequest? {
+        val type = getStringExtra(EXTRA_TYPE)
+            ?.let { value -> runCatching { FileOperationType.valueOf(value) }.getOrNull() }
+            ?: return null
+        val sources = getStringArrayListExtra(EXTRA_SOURCES)
+            ?.takeIf { it.isNotEmpty() }
+            ?.mapCatching(Paths::get)
+            ?: return null
+        val targetDirectory = getStringExtra(EXTRA_TARGET_DIRECTORY)
+            ?.let { value -> runCatching { Paths.get(value) }.getOrNull() }
+            ?: return null
+        return StartRequest(type, sources, targetDirectory)
+    }
+
+    private fun <T> Iterable<String>.mapCatching(transform: (String) -> T): List<T>? =
+        runCatching { map(transform) }.getOrNull()
+
+    private fun FileOperationState.isTerminal(): Boolean =
+        this is FileOperationState.Succeeded ||
+            this is FileOperationState.PartiallySucceeded ||
+            this is FileOperationState.Failed ||
+            this is FileOperationState.Cancelled
+
+    inner class LocalBinder : Binder() {
+        fun getService(): FileOperationService = this@FileOperationService
+    }
+
+    private data class StartRequest(
+        val type: FileOperationType,
+        val sources: List<Path>,
+        val targetDirectory: Path,
+    )
+
+    private companion object {
+        private const val ACTION_START = "com.example.watchfiles.fileops.action.START"
+        private const val EXTRA_TYPE = "extra_type"
+        private const val EXTRA_SOURCES = "extra_sources"
+        private const val EXTRA_TARGET_DIRECTORY = "extra_target_directory"
+        private const val NOTIFICATION_CHANNEL_ID = "file_operations"
+        private const val NOTIFICATION_ID = 1001
+    }
+}
