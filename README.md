@@ -95,3 +95,7 @@ adb -s <serial> shell pm install -r /data/local/tmp/watchfiles-debug.apk
 - 暂不提供收藏、最近目录、文件系统搜索、用户自定义排序或独立属性页
 - 暂不提供 APK 安装、局域网/WebDAV、Shizuku 或 root 后端
 - M3 计划继续关注后台文件操作、恢复能力和大目录性能
+
+## License
+
+本项目原创源代码使用 [Apache License 2.0](LICENSE) 授权。第三方依赖、平台组件和其他外部内容仍以其各自的许可证为准。
