@@ -1,0 +1,59 @@
+# M3 前台文件操作服务 closeout
+
+日期：2026-07-21
+
+状态：本地 Debug 构建、单元测试任务、Lint 和差异检查成功；设备验收为 `PENDING_DEVICE`。简报中的逐行 `exported` 管道扫描对换行的 Activity 属性产生了一个误报，已用补充的多行结构扫描确认没有非 Activity 导出组件；详见“架构与安全扫描”。
+
+## 本地 Debug 验证
+
+| 项目 | 命令/产物 | 实际结果 |
+|---|---|---|
+| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；任务为 `UP-TO-DATE`。当前 XML 报告汇总 158 tests、0 failures、0 errors、4 skipped。 |
+| Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，均为 `UP-TO-DATE`。 |
+| Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref`/`commit()` 警告）。 |
+| 空白差异检查 | `git diff --check` | exit 0，无输出。 |
+
+所有 Gradle 命令均显示同一条非致命环境警告：当前 SDK command-line tools 只理解至 SDK XML v3，但检测到 v4 XML。未运行 Release 构建、未执行 ADB 命令、未安装 APK，也未进行任何设备文件写入。
+
+## Debug APK 可追溯性
+
+- 路径：`app/build/outputs/apk/debug/app-debug.apk`
+- 文件大小：21,205,592 bytes
+- 构建产物时间（APK `LastWriteTime`）：2026-07-21 18:30:28 +08:00
+- SHA-256：`379DB662A806FABC190DD45A0C933863F84A09F98BA21BF9B93AABB946F3A22E`
+
+## 架构与安全扫描
+
+| 扫描 | 实际结果 |
+|---|---|
+| `rg -n "START_STICKY|WorkManager" app/src/main` | 无输出，`rg` exit 1（无匹配）；生产代码中未发现 `START_STICKY` 或 `WorkManager`。 |
+| `rg -n 'android:exported="true"' app/src/main/AndroidManifest.xml \| Select-String -NotMatch 'activity'` | 输出第 47 行 `android:exported="true"`，管道 exit 0。该行的 `<activity` 起始标签在上一行，故这是逐行筛选的误报；并非非 Activity 组件。 |
+| 补充结构扫描：`rg -n -U '<(service\|provider\|receiver)\\b[^>]*\\bandroid:exported="true"' app/src/main/AndroidManifest.xml` | 无输出，`rg` exit 1（无匹配）。Manifest 中 `FileOperationService` 与 `FileProvider` 均显式为 `android:exported="false"`。 |
+| `rg -n "START_NOT_STICKY\|FOREGROUND_SERVICE\|FileOperationService\|FileOperationRunner" app/src/main docs` | exit 0；定位到 Manifest 的 `FOREGROUND_SERVICE` 权限与 Service 注册、`FileOperationService.kt` 的 `START_NOT_STICKY` 返回值、`FileOperationRunner.kt`，及 M3 设计/计划中的对应约束。 |
+
+## 设备验收记录（Task 6）
+
+| 字段 | 当前值 |
+|---|---|
+| 设备状态 | `PENDING_DEVICE` |
+| ADB serial | `PENDING_DEVICE` |
+| 设备 API | `PENDING_DEVICE` |
+| 设备型号 | `PENDING_DEVICE` |
+| 安装/启动结果 | `PENDING_DEVICE` |
+| logcat 审计 | `PENDING_DEVICE` |
+| 写入范围 | `PENDING_DEVICE`；执行时仅允许 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` |
+
+## 剩余 Task 6 验收项
+
+1. 动态发现已授权设备，安装本记录的 Debug APK，并记录实际 serial、API、型号、包/版本信息。
+2. 在 `M1Sandbox` 内准备受控 fixture，并在操作前后记录文件清单与 SHA-256。
+3. 验收 COPY/MOVE 的前台通知、离开操作页或熄屏后的继续执行、重新打开后的同一任务进度与取消入口。
+4. 验收冲突等待、替换全部、取消终态，以及完成后的源/目标哈希、MOVE 源状态、临时文件清理、通知移除和目录刷新。
+5. 验收 DELETE 的预览、确认前取消、确认后熄屏继续、取消语义与目录结果。
+6. 记录进程终止边界（不自动重试或伪造恢复）和 Service/Activity/文件操作 logcat；确认没有重复任务、未授权路径写入、未处理异常或遗留通知。
+
+## Concerns
+
+- 本地 Lint 没有 error，但保留 2 条既有 `ApplySharedPref` warning；本任务按范围不修改 `TextTransactionJournal.kt`。
+- 原定逐行 `exported` 扫描不能识别跨行 XML 元素，因此不能单独用其输出判断组件类型；本记录保留原命令的真实结果，并补充结构扫描证据。
+- 未连接真实设备；任何前台通知、跨页面/熄屏继续、终态通知移除、文件哈希与 logcat 结论均未验收。
