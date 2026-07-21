@@ -1,7 +1,7 @@
 # WatchFiles 项目交接上下文
 
-更新日期：2026-07-17
-当前阶段：M0、图片查看增量、M1A、M1B 和 M1C 已完成；下一阶段为 M2 媒体与文本查看
+更新日期：2026-07-21
+当前阶段：M0、图片查看增量、M1A、M1B、M1C 和 M2 已完成；下一阶段为 M3 可靠性、后台操作与性能收尾
 
 ## 项目目标
 
@@ -46,7 +46,7 @@
 
 ## 当前工程配置
 
-- 项目目录：`C:\Users\13073\Downloads\watche`
+- 项目目录：`C:\Users\13073\Downloads\miwatchfiles-forxiaomiwatch5`
 - 应用工作名：WatchFiles
 - Debug 包名：`com.example.watchfiles.debug`
 - 基础包名：`com.example.watchfiles`，目前仍是占位名称
@@ -228,7 +228,7 @@ adb devices
 
 ```powershell
 adb uninstall com.example.watchfiles.debug
-adb install -r "C:\Users\13073\Downloads\watche\app\build\outputs\apk\debug\app-debug.apk"
+adb install -r "C:\Users\13073\Downloads\miwatchfiles-forxiaomiwatch5\app\build\outputs\apk\debug\app-debug.apk"
 ```
 
 获取崩溃日志：
@@ -241,7 +241,7 @@ adb logcat -d AndroidRuntime:E *:S
 
 ## 下一步建议
 
-开始 M2 媒体与文本查看。继续保留 `targetSdk 29`、`android:requestLegacyExternalStorage="true"`、`armeabi-v7a`、小米表冠自定义滚动、动态无线 ADB 和 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` 写入限制；开发期只构建 Debug，Release 交接另行进行。
+开始 M3 可靠性、后台操作与性能收尾。优先评估前台文件操作服务、息屏继续操作和恢复日志；继续保留 `targetSdk 29`、`android:requestLegacyExternalStorage="true"`、`armeabi-v7a`、小米表冠自定义滚动、动态无线 ADB 和 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` 写入限制；开发期只构建 Debug，Release 交接另行进行。
 
 ## 开发约束
 
