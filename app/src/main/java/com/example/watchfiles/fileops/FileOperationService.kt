@@ -38,6 +38,20 @@ internal sealed interface FileOperationServiceIntentCommand {
     data class PrepareDelete(val sources: List<Path>) : FileOperationServiceIntentCommand
 }
 
+internal fun dispatchFileOperationServiceIntentCommand(
+    command: FileOperationServiceIntentCommand,
+    onForegroundOnly: (FileOperationType) -> Unit,
+    onStart: (FileOperationType, List<Path>, Path) -> Unit,
+    onPrepareDelete: (List<Path>) -> Unit,
+) {
+    when (command) {
+        is FileOperationServiceIntentCommand.ForegroundOnly -> onForegroundOnly(command.type)
+        is FileOperationServiceIntentCommand.Start ->
+            onStart(command.type, command.sources, command.targetDirectory)
+        is FileOperationServiceIntentCommand.PrepareDelete -> onPrepareDelete(command.sources)
+    }
+}
+
 internal fun parseFileOperationServiceIntent(
     action: String?,
     type: String?,
@@ -172,13 +186,14 @@ class FileOperationService : Service(), FileOperationServicePort {
                 FileOperationServiceIntentContract.EXTRA_TARGET_DIRECTORY,
             ),
         ) ?: return START_NOT_STICKY
-        when (command) {
-            is FileOperationServiceIntentCommand.ForegroundOnly -> ensureForeground(command.type)
-            is FileOperationServiceIntentCommand.Start -> {
-                start(command.type, command.sources, command.targetDirectory)
-            }
-            is FileOperationServiceIntentCommand.PrepareDelete -> prepareDelete(command.sources)
-        }
+        dispatchFileOperationServiceIntentCommand(
+            command = command,
+            onForegroundOnly = ::ensureForeground,
+            onStart = { type, sources, targetDirectory ->
+                start(type, sources, targetDirectory)
+            },
+            onPrepareDelete = ::prepareDelete,
+        )
         return START_NOT_STICKY
     }
 

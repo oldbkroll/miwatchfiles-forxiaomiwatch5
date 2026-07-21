@@ -84,8 +84,7 @@ class FileOperationServiceClient internal constructor(
     private val lock = Any()
     private var port: FileOperationServicePort? = null
     private var stateCollectionJob: Job? = null
-    private var pendingCommand: StartCommand? = null
-    private var foregroundLaunchInProgress = false
+    private var pendingCommand: PendingCommand? = null
     private var bindingActive = false
     private var rebindScheduled = false
     private val connection = object : FileOperationServiceBindingConnection {
@@ -98,8 +97,8 @@ class FileOperationServiceClient internal constructor(
                 stateCollectionJob = scope.launch {
                     port.state.collect { state -> mutableState.value = state }
                 }
-                if (!foregroundLaunchInProgress) pendingCommand = null
             }
+            dispatchPendingIfReady()
         }
 
         override fun onDisconnected() {
@@ -151,7 +150,6 @@ class FileOperationServiceClient internal constructor(
                 rebindScheduled = false
                 port = null
                 pendingCommand = null
-                foregroundLaunchInProgress = false
                 stateCollectionJob?.cancel()
                 stateCollectionJob = null
                 true
@@ -166,18 +164,10 @@ class FileOperationServiceClient internal constructor(
         targetDirectory: Path,
     ): Boolean = submit(
         command = StartCommand.Transfer(type, sources, targetDirectory),
-        fullLaunch = FileOperationServiceLaunchRequest.Start(
-            type = type.name,
-            sources = ArrayList(sources.map(Path::toString)),
-            targetDirectory = targetDirectory.toString(),
-        ),
     )
 
     override fun prepareDelete(sources: List<Path>): Boolean = submit(
         command = StartCommand.Delete(sources),
-        fullLaunch = FileOperationServiceLaunchRequest.PrepareDelete(
-            sources = ArrayList(sources.map(Path::toString)),
-        ),
     )
 
     override fun confirmDelete(): Boolean = currentPort()?.confirmDelete() ?: false
@@ -196,36 +186,46 @@ class FileOperationServiceClient internal constructor(
 
     private fun submit(
         command: StartCommand,
-        fullLaunch: FileOperationServiceLaunchRequest,
     ): Boolean {
-        val connectedPort = synchronized(lock) {
-            port ?: run {
-                if (pendingCommand != null || mutableState.value != FileOperationState.Idle) {
-                    return false
-                }
-                pendingCommand = command
-                foregroundLaunchInProgress = true
-                return@run null
+        val pending = synchronized(lock) {
+            if (!bindingActive || pendingCommand != null || mutableState.value != FileOperationState.Idle) {
+                return false
             }
+            PendingCommand(command).also { pendingCommand = it }
         }
 
-        if (connectedPort == null) {
-            val launched = startForegroundService(fullLaunch)
+        val launched = startForegroundService(
+            FileOperationServiceLaunchRequest.ForegroundOnly(command.type.name),
+        )
+        if (!launched) {
             synchronized(lock) {
-                foregroundLaunchInProgress = false
-                if (!launched || port != null) {
-                    if (pendingCommand === command) pendingCommand = null
-                }
+                if (pendingCommand === pending) pendingCommand = null
             }
-            return launched
+            return false
         }
 
-        val foregroundLaunch = FileOperationServiceLaunchRequest.ForegroundOnly(command.type.name)
-        if (!startForegroundService(foregroundLaunch)) return false
-        val readyPort = synchronized(lock) {
-            port?.takeIf { it === connectedPort }
-        } ?: return false
-        return command.sendTo(readyPort)
+        synchronized(lock) {
+            if (pendingCommand === pending) pending.foregroundStarted = true
+        }
+        return dispatchPendingIfReady() ?: true
+    }
+
+    private fun dispatchPendingIfReady(): Boolean? {
+        val dispatch = synchronized(lock) {
+            val pending = pendingCommand ?: return null
+            val port = port ?: return null
+            if (!pending.foregroundStarted || pending.dispatching) return null
+            pending.dispatching = true
+            pending to port
+        }
+
+        val result = runCatching { dispatch.first.command.sendTo(dispatch.second) }
+            .onFailure { error -> logError("Unable to dispatch file operation command", error) }
+            .getOrDefault(false)
+        synchronized(lock) {
+            if (pendingCommand === dispatch.first) pendingCommand = null
+        }
+        return result
     }
 
     private fun startForegroundService(request: FileOperationServiceLaunchRequest): Boolean =
@@ -294,6 +294,13 @@ class FileOperationServiceClient internal constructor(
             override fun sendTo(port: FileOperationServicePort): Boolean =
                 port.prepareDelete(sources)
         }
+    }
+
+    private class PendingCommand(
+        val command: StartCommand,
+    ) {
+        var foregroundStarted = false
+        var dispatching = false
     }
 
     private companion object {

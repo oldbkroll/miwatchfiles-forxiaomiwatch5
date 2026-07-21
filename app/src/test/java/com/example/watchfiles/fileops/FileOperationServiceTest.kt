@@ -205,6 +205,20 @@ class FileOperationServiceTest {
         )
     }
 
+    @Test fun foregroundOnlyCommandEnsuresForegroundWithoutStartingRunner() {
+        val events = mutableListOf<String>()
+        val command = FileOperationServiceIntentCommand.ForegroundOnly(FileOperationType.DELETE)
+
+        dispatchFileOperationServiceIntentCommand(
+            command = command,
+            onForegroundOnly = { events += "foreground" },
+            onStart = { _, _, _ -> events += "runner.start" },
+            onPrepareDelete = { events += "runner.prepareDelete" },
+        )
+
+        assertEquals(listOf("foreground"), events)
+    }
+
     private class RecordingRunnerPort(
         private val events: MutableList<String> = mutableListOf(),
         private val updateStateOnStart: Boolean = false,

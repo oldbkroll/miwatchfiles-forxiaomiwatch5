@@ -2,6 +2,9 @@ package com.example.watchfiles.fileops
 
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,18 +93,14 @@ class FileOperationServiceClientTest {
         assertFalse(client.prepareDelete(listOf(Paths.get("/second.txt"))))
         assertEquals(
             listOf(
-                FileOperationServiceLaunchRequest.Start(
-                    FileOperationType.COPY.name,
-                    arrayListOf(source.toString()),
-                    target.toString(),
-                ),
+                FileOperationServiceLaunchRequest.ForegroundOnly(FileOperationType.COPY.name),
             ),
             binding.launches,
         )
 
         binding.connect(port)
         runCurrent()
-        assertEquals(0, port.startCalls)
+        assertEquals(1, port.startCalls)
         assertEquals(0, port.prepareDeleteCalls)
     }
 
@@ -157,6 +156,8 @@ class FileOperationServiceClientTest {
         assertEquals(FileOperationState.Idle, client.state.value)
         assertEquals(1, binding.bindCalls)
         assertEquals(0, binding.unbindCalls)
+        assertFalse(client.start(FileOperationType.COPY, listOf(source), target))
+        assertEquals(emptyList<FileOperationServiceLaunchRequest>(), binding.launches)
     }
 
     @Test fun clientDoesNotLeavePendingWhenForegroundLaunchFails() = runTest {
@@ -175,7 +176,7 @@ class FileOperationServiceClientTest {
         assertEquals(1, port.startCalls)
     }
 
-    @Test fun clientDoesNotReplayPendingWhenConnectionArrivesDuringLaunch() = runTest {
+    @Test fun clientDispatchesPendingAfterEarlyConnectionOnlyAfterForegroundReturns() = runTest {
         val events = mutableListOf<String>()
         val port = RecordingServicePort(startResult = true, events = events)
         val binding = FakeBindingAdapter(events = events, connectDuringLaunch = port)
@@ -184,8 +185,35 @@ class FileOperationServiceClientTest {
 
         assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
 
-        assertEquals(listOf("foreground"), events)
-        assertEquals(0, port.startCalls)
+        assertEquals(listOf("foreground", "port.start"), events)
+        assertEquals(1, port.startCalls)
+    }
+
+    @Test fun clientRejectsSecondStartWhilePendingDispatching() = runTest {
+        val dispatchStarted = CountDownLatch(1)
+        val releaseDispatch = CountDownLatch(1)
+        val port = RecordingServicePort(
+            startResult = true,
+            dispatchStarted = dispatchStarted,
+            releaseDispatch = releaseDispatch,
+        )
+        val binding = FakeBindingAdapter()
+        val client = client(binding)
+        client.connect()
+        assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            val connection = executor.submit { binding.connect(port) }
+            assertTrue(dispatchStarted.await(2, TimeUnit.SECONDS))
+            assertFalse(client.start(FileOperationType.COPY, listOf(source), target))
+            releaseDispatch.countDown()
+            connection.get(2, TimeUnit.SECONDS)
+        } finally {
+            releaseDispatch.countDown()
+            executor.shutdownNow()
+            executor.awaitTermination(2, TimeUnit.SECONDS)
+        }
     }
 
     private fun TestScope.client(binding: FileOperationServiceBindingAdapter) =
@@ -250,6 +278,8 @@ class FileOperationServiceClientTest {
         private val prepareDeleteResult: Boolean = false,
         private val confirmDeleteResult: Boolean = false,
         private val events: MutableList<String> = mutableListOf(),
+        private val dispatchStarted: CountDownLatch? = null,
+        private val releaseDispatch: CountDownLatch? = null,
     ) : FileOperationServicePort {
         val mutableState = MutableStateFlow(initialState)
         override val state: StateFlow<FileOperationState> = mutableState
@@ -268,6 +298,8 @@ class FileOperationServiceClientTest {
             targetDirectory: Path,
         ): Boolean {
             events += "port.start"
+            dispatchStarted?.countDown()
+            releaseDispatch?.await(2, TimeUnit.SECONDS)
             startCalls += 1
             startCall = StartCall(type, sources, targetDirectory)
             return startResult
