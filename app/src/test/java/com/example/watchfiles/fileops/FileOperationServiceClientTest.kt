@@ -146,6 +146,17 @@ class FileOperationServiceClientTest {
         assertEquals(3, binding.bindCalls)
     }
 
+    @Test fun clientRebindsAfterServiceDisconnected() = runTest {
+        val binding = FakeBindingAdapter()
+        val client = client(binding)
+        client.connect()
+
+        binding.serviceDisconnected()
+        runCurrent()
+
+        assertEquals(2, binding.bindCalls)
+    }
+
     @Test fun failedBindingKeepsClientIdle() = runTest {
         val binding = FakeBindingAdapter(bindResult = false)
         val client = client(binding)
@@ -269,6 +280,10 @@ class FileOperationServiceClientTest {
 
         fun nullBinding() {
             connection?.onNullBinding()
+        }
+
+        fun serviceDisconnected() {
+            connection?.onDisconnected()
         }
     }
 

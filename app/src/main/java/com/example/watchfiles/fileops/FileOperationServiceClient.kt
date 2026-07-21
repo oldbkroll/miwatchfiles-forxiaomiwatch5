@@ -102,11 +102,7 @@ class FileOperationServiceClient internal constructor(
         }
 
         override fun onDisconnected() {
-            synchronized(lock) {
-                port = null
-                stateCollectionJob?.cancel()
-                stateCollectionJob = null
-            }
+            loseBindingAndScheduleRebind()
         }
 
         override fun onBindingDied() {
