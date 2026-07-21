@@ -359,11 +359,12 @@ git diff --check
 执行架构约束扫描：
 
 ```powershell
-   rg -n "START_STICKY|WorkManager|android:exported=\"true\"" app/src/main
+   rg -n "START_STICKY|WorkManager" app/src/main
+   rg -n "android:exported=\"true\"" app/src/main/AndroidManifest.xml | Select-String -NotMatch "activity"
 rg -n "START_NOT_STICKY|FOREGROUND_SERVICE|FileOperationService|FileOperationRunner" app/src/main docs
 ```
 
-第一条命令应无输出；不得出现生产代码的 `START_STICKY`、WorkManager 依赖或导出的文件操作 Service。第二条命令应能定位到本次实现的关键约束和类。
+前两条命令都应无输出；不得出现生产代码的 `START_STICKY`、WorkManager 依赖或非 Activity 的导出组件。第三条命令应能定位到本次实现的关键约束和类。
 
 ### 记录要求
 
