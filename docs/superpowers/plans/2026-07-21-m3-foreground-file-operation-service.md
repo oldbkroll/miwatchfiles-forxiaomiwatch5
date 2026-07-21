@@ -22,8 +22,10 @@
 
 - `app/src/main/java/com/example/watchfiles/fileops/FileOperationRunner.kt`
 - `app/src/main/java/com/example/watchfiles/fileops/FileOperationService.kt`
+- `app/src/main/java/com/example/watchfiles/fileops/FileOperationNotification.kt`
 - `app/src/main/java/com/example/watchfiles/fileops/FileOperationServiceClient.kt`
 - `app/src/test/java/com/example/watchfiles/fileops/FileOperationRunnerTest.kt`
+- `app/src/test/java/com/example/watchfiles/fileops/FileOperationServiceTest.kt`
 - `app/src/test/java/com/example/watchfiles/fileops/FileOperationServiceClientTest.kt`
 - `docs/context/m3-foreground-file-operation-service-closeout.md`
 
@@ -54,13 +56,24 @@
 Runner 应提供以下最小接口；类型名称以当前包中的实际定义为准：
 
 ```kotlin
+interface FileOperationRunnerPort {
+    val state: StateFlow<FileOperationState>
+
+    fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean
+    fun prepareDelete(sources: List<Path>): Boolean
+    fun confirmDelete(): Boolean
+    fun replaceAll()
+    fun cancel()
+    fun consumeResult()
+}
+
 class FileOperationRunner(
     private val scanner: OperationScannerGateway = FileOperationScanner(),
     private val engine: OperationEngineGateway = FileOperationEngine(),
     private val taskIdFactory: () -> String = { UUID.randomUUID().toString() },
     private val errorLogger: (String, Throwable) -> Unit = { _, _ -> },
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
-) : AutoCloseable {
+) : FileOperationRunnerPort, AutoCloseable {
     val state: StateFlow<FileOperationState>
 
     fun start(
@@ -118,6 +131,8 @@ refactor: extract file operation runner
 ### 文件
 
 - 新增 `app/src/main/java/com/example/watchfiles/fileops/FileOperationService.kt`。
+- 新增 `app/src/main/java/com/example/watchfiles/fileops/FileOperationNotification.kt`。
+- 新增 `app/src/test/java/com/example/watchfiles/fileops/FileOperationServiceTest.kt`。
 - 修改 `app/src/main/AndroidManifest.xml`。
 
 ### Port 契约
@@ -166,11 +181,19 @@ interface FileOperationServicePort {
 
    并在 `<application>` 内注册 `android:exported="false"` 的 Service。不要把 Service 暴露给其他应用。
 
-4. 为通知和 Binder 边界设计可测试的纯 Kotlin seam（例如通知内容构造器和 Service Port 转发测试），不为了单元测试把 Android Service 生命周期复制到测试假实现中；真实 `startForeground`/`stopForeground` 生命周期由任务 6 在设备上验收。
+4. 将 `FileOperationServicePortAdapter` 放在 Service 同包内，用 `FileOperationRunnerPort` 做纯 Kotlin 转发 seam；Service 持有 Runner 和 Adapter，但不复制第二套任务状态。
 
-### 测试与验证边界
+### TDD 步骤
 
-Android `Service` 的真实生命周期不在当前 JVM 单元测试中伪造；任务 3 用纯 Kotlin seam 验证 Port/Client 的转发契约，任务 6 在真实 Debug 设备上验收 `startForeground`、通知移除和绑定生命周期。任务 2 先用编译检查锁定 Manifest、Service 和 Runner 的类型契约。
+1. 先新增 `FileOperationServiceTest.kt`，写出并运行失败测试：
+   - `idleAndTerminalStatesHaveNoNotificationContent`：`Idle` 与四种终态都不产生持续通知内容。
+   - `runningNotificationContainsTypeCurrentNameAndProgress`：Running 状态的通知内容包含操作类型、`OperationProgress.currentName`、已处理/总数，并保持低重要性所需的无声音/振动策略输入。
+   - `servicePortAdapterForwardsEveryRunnerCommand`：Adapter 的状态和 start、删除确认、覆盖、取消、消费结果全部来自 Runner Port。
+2. 实现 `FileOperationNotification.kt` 中的纯 Kotlin `FileOperationNotificationContent` 与状态映射；实现 Service 文件中的 `FileOperationServicePortAdapter`，使上述测试通过。
+3. 再实现 Android `FileOperationService`：
+   - 在 `onCreate()` 创建 Runner、Adapter、通知渠道和状态收集；通知由纯 Kotlin 内容映射决定标题、正文和进度。
+   - `startForeground()`/`stopForeground()` 只负责 Android 生命周期，真实调用不在 JVM 测试中伪造。
+4. 运行服务 seam 测试和编译检查；任务 6 在真实 Debug 设备上验收 `startForeground`、通知移除和绑定生命周期。
 
 ### 验证命令
 
