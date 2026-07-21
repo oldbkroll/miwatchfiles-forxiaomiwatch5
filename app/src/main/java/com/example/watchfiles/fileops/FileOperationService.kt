@@ -52,27 +52,30 @@ class FileOperationServicePortAdapter(
     private val runner: FileOperationRunnerPort,
     private val beforeTaskAccepted: (FileOperationType) -> Unit = {},
 ) : FileOperationServicePort {
+    private val commandLock = Any()
     override val state: StateFlow<FileOperationState> = runner.state
 
-    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean {
-        if (!canAccept(sources)) return false
-        beforeTaskAccepted(type)
-        return runner.start(type, sources, targetDirectory)
-    }
+    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
+        synchronized(commandLock) {
+            if (!canAccept(sources)) return@synchronized false
+            beforeTaskAccepted(type)
+            runner.start(type, sources, targetDirectory)
+        }
 
-    override fun prepareDelete(sources: List<Path>): Boolean {
-        if (!canAccept(sources)) return false
-        beforeTaskAccepted(FileOperationType.DELETE)
-        return runner.prepareDelete(sources)
-    }
+    override fun prepareDelete(sources: List<Path>): Boolean =
+        synchronized(commandLock) {
+            if (!canAccept(sources)) return@synchronized false
+            beforeTaskAccepted(FileOperationType.DELETE)
+            runner.prepareDelete(sources)
+        }
 
-    override fun confirmDelete(): Boolean = runner.confirmDelete()
+    override fun confirmDelete(): Boolean = synchronized(commandLock) { runner.confirmDelete() }
 
-    override fun replaceAll() = runner.replaceAll()
+    override fun replaceAll() = synchronized(commandLock) { runner.replaceAll() }
 
-    override fun cancel() = runner.cancel()
+    override fun cancel() = synchronized(commandLock) { runner.cancel() }
 
-    override fun consumeResult() = runner.consumeResult()
+    override fun consumeResult() = synchronized(commandLock) { runner.consumeResult() }
 
     private fun canAccept(sources: List<Path>): Boolean =
         sources.isNotEmpty() && runner.state.value == FileOperationState.Idle

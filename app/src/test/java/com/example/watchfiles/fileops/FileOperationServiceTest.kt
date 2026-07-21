@@ -1,6 +1,9 @@
 package com.example.watchfiles.fileops
 
 import java.nio.file.Paths
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -129,8 +132,44 @@ class FileOperationServiceTest {
         controller.close()
     }
 
+    @Test fun concurrentStartsAcceptOnlyOneTask() {
+        val ready = CountDownLatch(2)
+        val begin = CountDownLatch(1)
+        val foregroundEntered = CountDownLatch(1)
+        val releaseForeground = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        val runner = RecordingRunnerPort(updateStateOnStart = true)
+        val adapter = FileOperationServicePortAdapter(runner) {
+            foregroundEntered.countDown()
+            releaseForeground.await(5, TimeUnit.SECONDS)
+        }
+        val tasks = (1..2).map {
+            executor.submit<Boolean> {
+                ready.countDown()
+                begin.await(5, TimeUnit.SECONDS)
+                adapter.start(FileOperationType.COPY, listOf(source), target)
+            }
+        }
+
+        try {
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            begin.countDown()
+            assertTrue(foregroundEntered.await(5, TimeUnit.SECONDS))
+            releaseForeground.countDown()
+
+            val results = tasks.map { it.get(5, TimeUnit.SECONDS) }
+            assertEquals(1, results.count { it })
+            assertEquals(1, results.count { !it })
+        } finally {
+            releaseForeground.countDown()
+            executor.shutdownNow()
+            executor.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
     private class RecordingRunnerPort(
         private val events: MutableList<String> = mutableListOf(),
+        private val updateStateOnStart: Boolean = false,
     ) : FileOperationRunnerPort {
         private val mutableState = MutableStateFlow<FileOperationState>(FileOperationState.Idle)
         override val state: StateFlow<FileOperationState> = mutableState
@@ -152,6 +191,7 @@ class FileOperationServiceTest {
             startedType = type
             startedSources = sources
             startedTarget = targetDirectory
+            if (updateStateOnStart) mutableState.value = FileOperationState.Scanning(type)
             return true
         }
 
