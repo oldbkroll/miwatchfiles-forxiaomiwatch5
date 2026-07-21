@@ -37,7 +37,7 @@
 - `docs/context/current-development-context.md`
 - `docs/roadmap.md`
 
-## 任务 1：提取 Android-free 的 `FileOperationRunner`
+## Task 1：提取 Android-free 的 `FileOperationRunner`
 
 ### 目标
 
@@ -109,7 +109,7 @@ class FileOperationRunner(
 refactor: extract file operation runner
 ```
 
-## 任务 2：新增前台 `FileOperationService` 与通知生命周期
+## Task 2：新增前台 `FileOperationService` 与通知生命周期
 
 ### 目标
 
@@ -184,7 +184,7 @@ Android `Service` 的真实生命周期不在当前 JVM 单元测试中伪造；
 feat: add foreground file operation service
 ```
 
-## 任务 3：实现 Service Client，并让 Coordinator 变为 UI façade
+## Task 3：实现 Service Client，并让 Coordinator 变为 UI façade
 
 ### 目标
 
@@ -266,7 +266,7 @@ interface FileOperationServiceGateway {
 refactor: connect coordinator to file service
 ```
 
-## 任务 4：接回 MainActivity 的操作页与生命周期路由
+## Task 4：接回 MainActivity 的操作页与生命周期路由
 
 ### 目标
 
@@ -314,7 +314,7 @@ refactor: connect coordinator to file service
 feat: reconnect file operation UI to service
 ```
 
-## 任务 5：完成本地回归、Debug gate 与安全扫描
+## Task 5：完成本地回归、Debug gate 与安全扫描
 
 ### 目标
 
@@ -352,7 +352,7 @@ rg -n "START_NOT_STICKY|FOREGROUND_SERVICE|FileOperationService|FileOperationRun
 chore: verify M3 foreground service baseline
 ```
 
-## 任务 6：在设备上验收跨页面/熄屏期间的文件操作
+## Task 6：在设备上验收跨页面/熄屏期间的文件操作
 
 ### 目标
 
@@ -398,7 +398,7 @@ adb -s $serial logcat -d -v threadtime | Select-String "WatchFiles|FileOperation
 test: accept M3 foreground file operations on device
 ```
 
-## 任务 7：补齐文档、回写项目上下文并完成 M3 收口
+## Task 7：补齐文档、回写项目上下文并完成 M3 收口
 
 ### 文件
 
