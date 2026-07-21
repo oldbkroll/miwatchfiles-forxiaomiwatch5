@@ -8,8 +8,8 @@
 
 | 项目 | 命令/产物 | 实际结果 |
 |---|---|---|
-| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；任务为 `UP-TO-DATE`。当前 XML 报告汇总 158 tests、0 failures、0 errors、4 skipped。 |
-| Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，均为 `UP-TO-DATE`。 |
+| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；当前 XML 报告汇总 159 tests、0 failures、0 errors、4 skipped。 |
+| Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，3 executed、35 `UP-TO-DATE`。 |
 | Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref`/`commit()` 警告）。 |
 | 空白差异检查 | `git diff --check` | exit 0，无输出。 |
 
@@ -19,8 +19,8 @@
 
 - 路径：`app/build/outputs/apk/debug/app-debug.apk`
 - 文件大小：21,205,592 bytes
-- 构建产物时间（APK `LastWriteTime`）：2026-07-21 18:30:28 +08:00
-- SHA-256：`379DB662A806FABC190DD45A0C933863F84A09F98BA21BF9B93AABB946F3A22E`
+- 构建产物时间（APK `LastWriteTime`）：2026-07-21 19:35:02 +08:00
+- SHA-256（断开重绑修复后的当前最终 Debug APK）：`E4930E8175AF76E947DCECE9686B67FBD57E80DC2F3D3DBD4C7695884D46023A`
 
 ## 架构与安全扫描
 
@@ -39,7 +39,8 @@
 | ADB serial | `192.168.31.60:41719`（动态选择） |
 | 设备 API | 34 |
 | 安装/启动结果 | PASS；`com.example.watchfiles.debug`，`versionCode=6`，`0.3.1-dev-debug`，`minSdk=29`，`targetSdk=29`；`adb install -r` 成功 |
-| APK SHA-256 | `379DB662A806FABC190DD45A0C933863F84A09F98BA21BF9B93AABB946F3A22E` |
+| Task 6 安装 APK SHA-256 | `379DB662A806FABC190DD45A0C933863F84A09F98BA21BF9B93AABB946F3A22E` |
+| 当前最终 Debug APK SHA-256 | `E4930E8175AF76E947DCECE9686B67FBD57E80DC2F3D3DBD4C7695884D46023A`；包含 1ccc780 断开重绑修复，未重新进行设备安装验收 |
 | Fixture | PASS；仅 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox/M3ServiceAcceptance` |
 | COPY/MOVE/DELETE | PASS；UI 终态、文件清单和 alpha 哈希证据见 Task 6 report |
 | FGS/logcat | PASS；Background started FGS、静默通知、终态 FGS stop；无 `FATAL EXCEPTION` |
