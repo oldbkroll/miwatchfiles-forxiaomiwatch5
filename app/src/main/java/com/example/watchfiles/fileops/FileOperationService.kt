@@ -30,13 +30,21 @@ interface FileOperationServicePort {
 
 class FileOperationServicePortAdapter(
     private val runner: FileOperationRunnerPort,
+    private val beforeTaskAccepted: (FileOperationType) -> Unit = {},
 ) : FileOperationServicePort {
     override val state: StateFlow<FileOperationState> = runner.state
 
-    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
-        runner.start(type, sources, targetDirectory)
+    override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean {
+        if (!canAccept(sources)) return false
+        beforeTaskAccepted(type)
+        return runner.start(type, sources, targetDirectory)
+    }
 
-    override fun prepareDelete(sources: List<Path>): Boolean = runner.prepareDelete(sources)
+    override fun prepareDelete(sources: List<Path>): Boolean {
+        if (!canAccept(sources)) return false
+        beforeTaskAccepted(FileOperationType.DELETE)
+        return runner.prepareDelete(sources)
+    }
 
     override fun confirmDelete(): Boolean = runner.confirmDelete()
 
@@ -45,6 +53,9 @@ class FileOperationServicePortAdapter(
     override fun cancel() = runner.cancel()
 
     override fun consumeResult() = runner.consumeResult()
+
+    private fun canAccept(sources: List<Path>): Boolean =
+        sources.isNotEmpty() && runner.state.value == FileOperationState.Idle
 }
 
 class FileOperationService : Service(), FileOperationServicePort {
@@ -53,6 +64,7 @@ class FileOperationService : Service(), FileOperationServicePort {
     private lateinit var notificationManager: NotificationManager
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var stateCollection: Job? = null
+    private var foregroundStarted = false
     private val binder = LocalBinder()
 
     override val state: StateFlow<FileOperationState>
@@ -61,7 +73,7 @@ class FileOperationService : Service(), FileOperationServicePort {
     override fun onCreate() {
         super.onCreate()
         runner = FileOperationRunner()
-        adapter = FileOperationServicePortAdapter(runner)
+        adapter = FileOperationServicePortAdapter(runner, ::ensureForeground)
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
         stateCollection = serviceScope.launch {
@@ -72,19 +84,21 @@ class FileOperationService : Service(), FileOperationServicePort {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_START || state.value != FileOperationState.Idle) return START_NOT_STICKY
+        if (intent?.action != ACTION_START) return START_NOT_STICKY
         val request = intent.toStartRequest() ?: return START_NOT_STICKY
-        startForeground(NOTIFICATION_ID, buildNotification(notificationContentFor(FileOperationState.Scanning(request.type))!!))
-        if (!start(request.type, request.sources, request.targetDirectory)) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        }
+        start(request.type, request.sources, request.targetDirectory)
         return START_NOT_STICKY
     }
 
     override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
-        adapter.start(type, sources, targetDirectory)
+        adapter.start(type, sources, targetDirectory).also { accepted ->
+            if (!accepted && state.value == FileOperationState.Idle) stopForegroundIfStarted()
+        }
 
-    override fun prepareDelete(sources: List<Path>): Boolean = adapter.prepareDelete(sources)
+    override fun prepareDelete(sources: List<Path>): Boolean =
+        adapter.prepareDelete(sources).also { accepted ->
+            if (!accepted && state.value == FileOperationState.Idle) stopForegroundIfStarted()
+        }
 
     override fun confirmDelete(): Boolean = adapter.confirmDelete()
 
@@ -103,12 +117,29 @@ class FileOperationService : Service(), FileOperationServicePort {
 
     private fun publishState(state: FileOperationState) {
         notificationContentFor(state)?.let { notificationManager.notify(NOTIFICATION_ID, buildNotification(it)) }
+        if (state == FileOperationState.Idle) {
+            notificationManager.cancel(NOTIFICATION_ID)
+            stopForegroundIfStarted()
+        }
         if (state.isTerminal()) {
             stateCollection?.cancel()
             notificationManager.cancel(NOTIFICATION_ID)
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopForegroundIfStarted()
             stopSelf()
         }
+    }
+
+    private fun ensureForeground(type: FileOperationType) {
+        if (foregroundStarted) return
+        val content = notificationContentFor(FileOperationState.Scanning(type)) ?: return
+        startForeground(NOTIFICATION_ID, buildNotification(content))
+        foregroundStarted = true
+    }
+
+    private fun stopForegroundIfStarted() {
+        if (!foregroundStarted) return
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        foregroundStarted = false
     }
 
     private fun createNotificationChannel() {

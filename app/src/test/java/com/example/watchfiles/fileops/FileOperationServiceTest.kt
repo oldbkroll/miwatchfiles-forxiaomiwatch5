@@ -61,18 +61,32 @@ class FileOperationServiceTest {
         assertEquals(listOf(source), runner.startedSources)
         assertEquals(target, runner.startedTarget)
         assertEquals(listOf(source), runner.deleteSources)
+        assertEquals(1, runner.confirmDeleteCalls)
         assertEquals(1, runner.replaceAllCalls)
         assertEquals(1, runner.cancelCalls)
         assertEquals(1, runner.consumeResultCalls)
     }
 
-    private class RecordingRunnerPort : FileOperationRunnerPort {
+    @Test fun servicePortAdapterEntersForegroundBeforeRunnerAcceptsTask() {
+        val events = mutableListOf<String>()
+        val runner = RecordingRunnerPort(events)
+        val adapter = FileOperationServicePortAdapter(runner) { events += "foreground" }
+
+        assertTrue(adapter.start(FileOperationType.COPY, listOf(source), target))
+
+        assertEquals(listOf("foreground", "runner.start"), events)
+    }
+
+    private class RecordingRunnerPort(
+        private val events: MutableList<String> = mutableListOf(),
+    ) : FileOperationRunnerPort {
         private val mutableState = MutableStateFlow<FileOperationState>(FileOperationState.Idle)
         override val state: StateFlow<FileOperationState> = mutableState
         var startedType: FileOperationType? = null
         var startedSources: List<java.nio.file.Path>? = null
         var startedTarget: java.nio.file.Path? = null
         var deleteSources: List<java.nio.file.Path>? = null
+        var confirmDeleteCalls = 0
         var replaceAllCalls = 0
         var cancelCalls = 0
         var consumeResultCalls = 0
@@ -82,6 +96,7 @@ class FileOperationServiceTest {
             sources: List<java.nio.file.Path>,
             targetDirectory: java.nio.file.Path,
         ): Boolean {
+            events += "runner.start"
             startedType = type
             startedSources = sources
             startedTarget = targetDirectory
@@ -93,7 +108,10 @@ class FileOperationServiceTest {
             return true
         }
 
-        override fun confirmDelete(): Boolean = true
+        override fun confirmDelete(): Boolean {
+            confirmDeleteCalls += 1
+            return true
+        }
 
         override fun replaceAll() {
             replaceAllCalls += 1
