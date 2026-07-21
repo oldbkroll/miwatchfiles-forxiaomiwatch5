@@ -2,7 +2,7 @@
 
 日期：2026-07-21
 
-状态：本地 Debug 构建、单元测试任务、Lint 和差异检查成功；设备验收为 `PENDING_DEVICE`。简报中的逐行 `exported` 管道扫描对换行的 Activity 属性产生了一个误报，已用补充的多行结构扫描确认没有非 Activity 导出组件；详见“架构与安全扫描”。
+状态：本地 Debug 构建、单元测试任务、Lint 和差异检查成功；基础 COPY/MOVE/DELETE 真机冒烟验收通过，扩展设备场景仍为 `PENDING_DEVICE_UI`。简报中的逐行 `exported` 管道扫描对换行的 Activity 属性产生了一个误报，已用补充的多行结构扫描确认没有非 Activity 导出组件；详见“架构与安全扫描”。
 
 ## 本地 Debug 验证
 
@@ -13,7 +13,7 @@
 | Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref`/`commit()` 警告）。 |
 | 空白差异检查 | `git diff --check` | exit 0，无输出。 |
 
-所有 Gradle 命令均显示同一条非致命环境警告：当前 SDK command-line tools 只理解至 SDK XML v3，但检测到 v4 XML。未运行 Release 构建、未执行 ADB 命令、未安装 APK，也未进行任何设备文件写入。
+所有 Gradle 命令均显示同一条非致命环境警告：当前 SDK command-line tools 只理解至 SDK XML v3，但检测到 v4 XML。未运行 Release 构建。
 
 ## Debug APK 可追溯性
 
@@ -35,15 +35,16 @@
 
 | 字段 | 当前值 |
 |---|---|
-| 设备状态 | `PENDING_DEVICE` |
-| ADB serial | `PENDING_DEVICE` |
-| 设备 API | `PENDING_DEVICE` |
-| 设备型号 | `PENDING_DEVICE` |
-| 安装/启动结果 | `PENDING_DEVICE` |
-| logcat 审计 | `PENDING_DEVICE` |
-| 写入范围 | `PENDING_DEVICE`；执行时仅允许 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox` |
+| 设备状态 | PASS；M2505W1 / grasslte |
+| ADB serial | `192.168.31.60:41719`（动态选择） |
+| 设备 API | 34 |
+| 安装/启动结果 | PASS；`com.example.watchfiles.debug`，`versionCode=6`，`0.3.1-dev-debug`，`minSdk=29`，`targetSdk=29`；`adb install -r` 成功 |
+| APK SHA-256 | `379DB662A806FABC190DD45A0C933863F84A09F98BA21BF9B93AABB946F3A22E` |
+| Fixture | PASS；仅 `/storage/emulated/0/Download/WatchFilesTest/M1Sandbox/M3ServiceAcceptance` |
+| COPY/MOVE/DELETE | PASS；UI 终态、文件清单和 alpha 哈希证据见 Task 6 report |
+| FGS/logcat | PASS；Background started FGS、静默通知、终态 FGS stop；无 `FATAL EXCEPTION` |
 
-## 剩余 Task 6 验收项
+## 剩余设备验收项（PENDING_DEVICE_UI）
 
 1. 动态发现已授权设备，安装本记录的 Debug APK，并记录实际 serial、API、型号、包/版本信息。
 2. 在 `M1Sandbox` 内准备受控 fixture，并在操作前后记录文件清单与 SHA-256。
@@ -56,4 +57,6 @@
 
 - 本地 Lint 没有 error，但保留 2 条既有 `ApplySharedPref` warning；本任务按范围不修改 `TextTransactionJournal.kt`。
 - 原定逐行 `exported` 扫描不能识别跨行 XML 元素，因此不能单独用其输出判断组件类型；本记录保留原命令的真实结果，并补充结构扫描证据。
-- 未连接真实设备；任何前台通知、跨页面/熄屏继续、终态通知移除、文件哈希与 logcat 结论均未验收。
+- 本次完成的是基础 COPY/MOVE/DELETE 冒烟，不等同于完整 M3 验收。
+- 熄屏/Activity 重入、冲突等待与替换、运行中取消、进程终止/恢复仍未执行；不得使用“已验证”描述这些项目。
+- 写入范围结论仅限本次 fixture 的最终检查范围，不能外推为全设备写入审计。
