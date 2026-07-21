@@ -31,6 +31,8 @@ interface FileOperationServiceGateway {
 internal interface FileOperationServiceBindingConnection {
     fun onConnected(port: FileOperationServicePort)
     fun onDisconnected()
+    fun onBindingDied()
+    fun onNullBinding()
 }
 
 internal interface FileOperationServiceBindingAdapter {
@@ -40,15 +42,32 @@ internal interface FileOperationServiceBindingAdapter {
 }
 
 internal sealed interface FileOperationServiceLaunchRequest {
+    val action: String
+    val type: String?
+    val sources: ArrayList<String>?
+    val targetDirectory: String?
+
+    data class ForegroundOnly(override val type: String) : FileOperationServiceLaunchRequest {
+        override val action = FileOperationServiceIntentContract.ACTION_FOREGROUND_ONLY
+        override val sources: ArrayList<String>? = null
+        override val targetDirectory: String? = null
+    }
+
     data class Start(
-        val type: String,
-        val sources: ArrayList<String>,
-        val targetDirectory: String,
-    ) : FileOperationServiceLaunchRequest
+        override val type: String,
+        override val sources: ArrayList<String>,
+        override val targetDirectory: String,
+    ) : FileOperationServiceLaunchRequest {
+        override val action = FileOperationServiceIntentContract.ACTION_START
+    }
 
     data class PrepareDelete(
-        val sources: ArrayList<String>,
-    ) : FileOperationServiceLaunchRequest
+        override val sources: ArrayList<String>,
+    ) : FileOperationServiceLaunchRequest {
+        override val action = FileOperationServiceIntentContract.ACTION_PREPARE_DELETE
+        override val type: String? = null
+        override val targetDirectory: String? = null
+    }
 }
 
 class FileOperationServiceClient internal constructor(
@@ -66,10 +85,12 @@ class FileOperationServiceClient internal constructor(
     private var port: FileOperationServicePort? = null
     private var stateCollectionJob: Job? = null
     private var pendingCommand: StartCommand? = null
+    private var foregroundLaunchInProgress = false
     private var bindingActive = false
+    private var rebindScheduled = false
     private val connection = object : FileOperationServiceBindingConnection {
         override fun onConnected(port: FileOperationServicePort) {
-            val pending = synchronized(lock) {
+            synchronized(lock) {
                 if (!bindingActive) return
                 this@FileOperationServiceClient.port = port
                 stateCollectionJob?.cancel()
@@ -77,9 +98,8 @@ class FileOperationServiceClient internal constructor(
                 stateCollectionJob = scope.launch {
                     port.state.collect { state -> mutableState.value = state }
                 }
-                pendingCommand.also { pendingCommand = null }
+                if (!foregroundLaunchInProgress) pendingCommand = null
             }
-            pending?.sendTo(port)
         }
 
         override fun onDisconnected() {
@@ -88,6 +108,14 @@ class FileOperationServiceClient internal constructor(
                 stateCollectionJob?.cancel()
                 stateCollectionJob = null
             }
+        }
+
+        override fun onBindingDied() {
+            loseBindingAndScheduleRebind()
+        }
+
+        override fun onNullBinding() {
+            loseBindingAndScheduleRebind()
         }
     }
 
@@ -108,7 +136,6 @@ class FileOperationServiceClient internal constructor(
         if (!bound) {
             synchronized(lock) {
                 bindingActive = false
-                port = null
             }
             logError("Unable to bind file operation service")
         }
@@ -117,20 +144,20 @@ class FileOperationServiceClient internal constructor(
     override fun disconnect() {
         val shouldUnbind = synchronized(lock) {
             if (!bindingActive) {
+                rebindScheduled = false
                 false
             } else {
                 bindingActive = false
+                rebindScheduled = false
                 port = null
                 pendingCommand = null
+                foregroundLaunchInProgress = false
                 stateCollectionJob?.cancel()
                 stateCollectionJob = null
                 true
             }
         }
-        if (shouldUnbind) {
-            runCatching { bindingAdapter.unbind() }
-                .onFailure { error -> logError("Unable to unbind file operation service", error) }
-        }
+        if (shouldUnbind) unbindSafely()
     }
 
     override fun start(
@@ -138,8 +165,8 @@ class FileOperationServiceClient internal constructor(
         sources: List<Path>,
         targetDirectory: Path,
     ): Boolean = submit(
-        StartCommand.Transfer(type, sources, targetDirectory),
-        FileOperationServiceLaunchRequest.Start(
+        command = StartCommand.Transfer(type, sources, targetDirectory),
+        fullLaunch = FileOperationServiceLaunchRequest.Start(
             type = type.name,
             sources = ArrayList(sources.map(Path::toString)),
             targetDirectory = targetDirectory.toString(),
@@ -147,8 +174,8 @@ class FileOperationServiceClient internal constructor(
     )
 
     override fun prepareDelete(sources: List<Path>): Boolean = submit(
-        StartCommand.Delete(sources),
-        FileOperationServiceLaunchRequest.PrepareDelete(
+        command = StartCommand.Delete(sources),
+        fullLaunch = FileOperationServiceLaunchRequest.PrepareDelete(
             sources = ArrayList(sources.map(Path::toString)),
         ),
     )
@@ -169,38 +196,89 @@ class FileOperationServiceClient internal constructor(
 
     private fun submit(
         command: StartCommand,
-        launchRequest: FileOperationServiceLaunchRequest,
+        fullLaunch: FileOperationServiceLaunchRequest,
     ): Boolean {
         val connectedPort = synchronized(lock) {
-            port.also { currentPort ->
-                if (currentPort == null) {
-                    if (pendingCommand != null || mutableState.value != FileOperationState.Idle) {
-                        return false
-                    }
-                    pendingCommand = command
+            port ?: run {
+                if (pendingCommand != null || mutableState.value != FileOperationState.Idle) {
+                    return false
                 }
+                pendingCommand = command
+                foregroundLaunchInProgress = true
+                return@run null
             }
         }
 
-        val launched = runCatching { bindingAdapter.startForegroundService(launchRequest) }
+        if (connectedPort == null) {
+            val launched = startForegroundService(fullLaunch)
+            synchronized(lock) {
+                foregroundLaunchInProgress = false
+                if (!launched || port != null) {
+                    if (pendingCommand === command) pendingCommand = null
+                }
+            }
+            return launched
+        }
+
+        val foregroundLaunch = FileOperationServiceLaunchRequest.ForegroundOnly(command.type.name)
+        if (!startForegroundService(foregroundLaunch)) return false
+        val readyPort = synchronized(lock) {
+            port?.takeIf { it === connectedPort }
+        } ?: return false
+        return command.sendTo(readyPort)
+    }
+
+    private fun startForegroundService(request: FileOperationServiceLaunchRequest): Boolean =
+        runCatching { bindingAdapter.startForegroundService(request) }
             .onFailure { error -> logError("Unable to start file operation service", error) }
             .isSuccess
-        if (!launched) {
-            synchronized(lock) {
-                if (pendingCommand === command) pendingCommand = null
-            }
-            return false
-        }
-        return connectedPort?.let(command::sendTo) ?: true
-    }
 
     private fun currentPort(): FileOperationServicePort? = synchronized(lock) { port }
 
+    private fun loseBindingAndScheduleRebind() {
+        val shouldRebind = synchronized(lock) {
+            if (!bindingActive) {
+                false
+            } else {
+                bindingActive = false
+                port = null
+                stateCollectionJob?.cancel()
+                stateCollectionJob = null
+                if (rebindScheduled) {
+                    false
+                } else {
+                    rebindScheduled = true
+                    true
+                }
+            }
+        }
+        if (!shouldRebind) return
+
+        unbindSafely()
+        scope.launch {
+            val shouldRun = synchronized(lock) {
+                if (!rebindScheduled) {
+                    false
+                } else {
+                    rebindScheduled = false
+                    true
+                }
+            }
+            if (shouldRun) connect()
+        }
+    }
+
+    private fun unbindSafely() {
+        runCatching { bindingAdapter.unbind() }
+            .onFailure { error -> logError("Unable to unbind file operation service", error) }
+    }
+
     private sealed interface StartCommand {
+        val type: FileOperationType
         fun sendTo(port: FileOperationServicePort): Boolean
 
         data class Transfer(
-            val type: FileOperationType,
+            override val type: FileOperationType,
             val sources: List<Path>,
             val targetDirectory: Path,
         ) : StartCommand {
@@ -211,6 +289,8 @@ class FileOperationServiceClient internal constructor(
         data class Delete(
             val sources: List<Path>,
         ) : StartCommand {
+            override val type: FileOperationType = FileOperationType.DELETE
+
             override fun sendTo(port: FileOperationServicePort): Boolean =
                 port.prepareDelete(sources)
         }
@@ -235,7 +315,7 @@ private class AndroidFileOperationServiceBindingAdapter(
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val service = (binder as? FileOperationService.LocalBinder)?.getService()
             if (service == null) {
-                clientConnection?.onDisconnected()
+                clientConnection?.onNullBinding()
                 return
             }
             clientConnection?.onConnected(service)
@@ -246,11 +326,11 @@ private class AndroidFileOperationServiceBindingAdapter(
         }
 
         override fun onBindingDied(name: ComponentName?) {
-            clientConnection?.onDisconnected()
+            clientConnection?.onBindingDied()
         }
 
         override fun onNullBinding(name: ComponentName?) {
-            clientConnection?.onDisconnected()
+            clientConnection?.onNullBinding()
         }
     }
 
@@ -271,28 +351,15 @@ private class AndroidFileOperationServiceBindingAdapter(
 
     override fun startForegroundService(request: FileOperationServiceLaunchRequest) {
         val intent = Intent(applicationContext, FileOperationService::class.java).apply {
-            when (request) {
-                is FileOperationServiceLaunchRequest.Start -> {
-                    action = ACTION_START
-                    putExtra(EXTRA_TYPE, request.type)
-                    putStringArrayListExtra(EXTRA_SOURCES, request.sources)
-                    putExtra(EXTRA_TARGET_DIRECTORY, request.targetDirectory)
-                }
-                is FileOperationServiceLaunchRequest.PrepareDelete -> {
-                    action = ACTION_PREPARE_DELETE
-                    putStringArrayListExtra(EXTRA_SOURCES, request.sources)
-                }
+            action = request.action
+            request.type?.let { putExtra(FileOperationServiceIntentContract.EXTRA_TYPE, it) }
+            request.sources?.let {
+                putStringArrayListExtra(FileOperationServiceIntentContract.EXTRA_SOURCES, it)
+            }
+            request.targetDirectory?.let {
+                putExtra(FileOperationServiceIntentContract.EXTRA_TARGET_DIRECTORY, it)
             }
         }
         ContextCompat.startForegroundService(applicationContext, intent)
-    }
-
-    private companion object {
-        private const val ACTION_START = "com.example.watchfiles.fileops.action.START"
-        private const val ACTION_PREPARE_DELETE =
-            "com.example.watchfiles.fileops.action.PREPARE_DELETE"
-        private const val EXTRA_TYPE = "extra_type"
-        private const val EXTRA_SOURCES = "extra_sources"
-        private const val EXTRA_TARGET_DIRECTORY = "extra_target_directory"
     }
 }

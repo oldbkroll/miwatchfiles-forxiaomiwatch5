@@ -167,6 +167,44 @@ class FileOperationServiceTest {
         }
     }
 
+    @Test fun prepareDeleteLaunchUsesServiceParsingContract() {
+        val request = FileOperationServiceLaunchRequest.PrepareDelete(
+            arrayListOf(source.toString()),
+        )
+
+        assertEquals(
+            FileOperationServiceIntentContract.ACTION_PREPARE_DELETE,
+            request.action,
+        )
+        assertEquals(
+            FileOperationServiceIntentCommand.PrepareDelete(listOf(source)),
+            parseFileOperationServiceIntent(
+                action = request.action,
+                type = request.type,
+                sources = request.sources,
+                targetDirectory = request.targetDirectory,
+            ),
+        )
+    }
+
+    @Test fun foregroundOnlyLaunchUsesServiceParsingContract() {
+        val request = FileOperationServiceLaunchRequest.ForegroundOnly(FileOperationType.DELETE.name)
+
+        assertEquals(
+            FileOperationServiceIntentContract.ACTION_FOREGROUND_ONLY,
+            request.action,
+        )
+        assertEquals(
+            FileOperationServiceIntentCommand.ForegroundOnly(FileOperationType.DELETE),
+            parseFileOperationServiceIntent(
+                action = request.action,
+                type = request.type,
+                sources = request.sources,
+                targetDirectory = request.targetDirectory,
+            ),
+        )
+    }
+
     private class RecordingRunnerPort(
         private val events: MutableList<String> = mutableListOf(),
         private val updateStateOnStart: Boolean = false,

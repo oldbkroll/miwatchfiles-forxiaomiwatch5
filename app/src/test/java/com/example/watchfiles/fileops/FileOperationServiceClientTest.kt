@@ -60,17 +60,24 @@ class FileOperationServiceClientTest {
         assertEquals(1, port.consumeResultCalls)
         assertEquals(
             listOf(
-                FileOperationServiceLaunchRequest.Start(
-                    FileOperationType.MOVE.name,
-                    arrayListOf(source.toString()),
-                    target.toString(),
-                ),
-                FileOperationServiceLaunchRequest.PrepareDelete(
-                    arrayListOf(source.toString()),
-                ),
+                FileOperationServiceLaunchRequest.ForegroundOnly(FileOperationType.MOVE.name),
+                FileOperationServiceLaunchRequest.ForegroundOnly(FileOperationType.DELETE.name),
             ),
             binding.launches,
         )
+    }
+
+    @Test fun clientStartsForegroundBeforeSendingConnectedCommand() = runTest {
+        val events = mutableListOf<String>()
+        val port = RecordingServicePort(startResult = true, events = events)
+        val binding = FakeBindingAdapter(events = events)
+        val client = client(binding)
+        client.connect()
+        binding.connect(port)
+
+        assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
+
+        assertEquals(listOf("foreground", "port.start"), events)
     }
 
     @Test fun clientQueuesAtMostOneStartUntilBound() = runTest {
@@ -81,16 +88,21 @@ class FileOperationServiceClientTest {
 
         assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
         assertFalse(client.prepareDelete(listOf(Paths.get("/second.txt"))))
-        assertEquals(1, binding.launches.size)
+        assertEquals(
+            listOf(
+                FileOperationServiceLaunchRequest.Start(
+                    FileOperationType.COPY.name,
+                    arrayListOf(source.toString()),
+                    target.toString(),
+                ),
+            ),
+            binding.launches,
+        )
 
         binding.connect(port)
         runCurrent()
-        assertEquals(1, port.startCalls)
-
-        binding.disconnectService()
-        binding.connect(port)
-        runCurrent()
-        assertEquals(1, port.startCalls)
+        assertEquals(0, port.startCalls)
+        assertEquals(0, port.prepareDeleteCalls)
     }
 
     @Test fun clientDisconnectStopsStateCollection() = runTest {
@@ -115,6 +127,26 @@ class FileOperationServiceClientTest {
         assertEquals(1, binding.unbindCalls)
     }
 
+    @Test fun clientRebindsOnceAfterBindingDiedAndNullBinding() = runTest {
+        val binding = FakeBindingAdapter()
+        val client = client(binding)
+        client.connect()
+
+        binding.bindingDied()
+        runCurrent()
+        assertEquals(1, binding.unbindCalls)
+        assertEquals(2, binding.bindCalls)
+
+        binding.nullBinding()
+        runCurrent()
+        assertEquals(2, binding.unbindCalls)
+        assertEquals(3, binding.bindCalls)
+
+        client.connect()
+        runCurrent()
+        assertEquals(3, binding.bindCalls)
+    }
+
     @Test fun failedBindingKeepsClientIdle() = runTest {
         val binding = FakeBindingAdapter(bindResult = false)
         val client = client(binding)
@@ -125,6 +157,35 @@ class FileOperationServiceClientTest {
         assertEquals(FileOperationState.Idle, client.state.value)
         assertEquals(1, binding.bindCalls)
         assertEquals(0, binding.unbindCalls)
+    }
+
+    @Test fun clientDoesNotLeavePendingWhenForegroundLaunchFails() = runTest {
+        val port = RecordingServicePort(startResult = true)
+        val binding = FakeBindingAdapter(initialFailForegroundLaunch = true)
+        val client = client(binding)
+        client.connect()
+
+        assertFalse(client.start(FileOperationType.COPY, listOf(source), target))
+        binding.failForegroundLaunch = false
+        binding.connect(port)
+        runCurrent()
+        assertEquals(0, port.startCalls)
+
+        assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
+        assertEquals(1, port.startCalls)
+    }
+
+    @Test fun clientDoesNotReplayPendingWhenConnectionArrivesDuringLaunch() = runTest {
+        val events = mutableListOf<String>()
+        val port = RecordingServicePort(startResult = true, events = events)
+        val binding = FakeBindingAdapter(events = events, connectDuringLaunch = port)
+        val client = client(binding)
+        client.connect()
+
+        assertTrue(client.start(FileOperationType.COPY, listOf(source), target))
+
+        assertEquals(listOf("foreground"), events)
+        assertEquals(0, port.startCalls)
     }
 
     private fun TestScope.client(binding: FileOperationServiceBindingAdapter) =
@@ -142,12 +203,16 @@ class FileOperationServiceClientTest {
     )
 
     private class FakeBindingAdapter(
+        private val events: MutableList<String> = mutableListOf(),
+        private val connectDuringLaunch: FileOperationServicePort? = null,
         private val bindResult: Boolean = true,
+        initialFailForegroundLaunch: Boolean = false,
     ) : FileOperationServiceBindingAdapter {
         private var connection: FileOperationServiceBindingConnection? = null
         val launches = mutableListOf<FileOperationServiceLaunchRequest>()
         var bindCalls = 0
         var unbindCalls = 0
+        var failForegroundLaunch = initialFailForegroundLaunch
 
         override fun bind(connection: FileOperationServiceBindingConnection): Boolean {
             bindCalls += 1
@@ -160,15 +225,22 @@ class FileOperationServiceClientTest {
         }
 
         override fun startForegroundService(request: FileOperationServiceLaunchRequest) {
+            if (failForegroundLaunch) error("foreground launch failed")
+            events += "foreground"
             launches += request
+            connectDuringLaunch?.let { connection?.onConnected(it) }
         }
 
         fun connect(port: FileOperationServicePort) {
             connection?.onConnected(port)
         }
 
-        fun disconnectService() {
-            connection?.onDisconnected()
+        fun bindingDied() {
+            connection?.onBindingDied()
+        }
+
+        fun nullBinding() {
+            connection?.onNullBinding()
         }
     }
 
@@ -177,11 +249,13 @@ class FileOperationServiceClientTest {
         private val startResult: Boolean = false,
         private val prepareDeleteResult: Boolean = false,
         private val confirmDeleteResult: Boolean = false,
+        private val events: MutableList<String> = mutableListOf(),
     ) : FileOperationServicePort {
         val mutableState = MutableStateFlow(initialState)
         override val state: StateFlow<FileOperationState> = mutableState
         var startCall: StartCall? = null
         var startCalls = 0
+        var prepareDeleteCalls = 0
         var prepareDeleteSources: List<Path>? = null
         var confirmDeleteCalls = 0
         var replaceAllCalls = 0
@@ -193,12 +267,14 @@ class FileOperationServiceClientTest {
             sources: List<Path>,
             targetDirectory: Path,
         ): Boolean {
+            events += "port.start"
             startCalls += 1
             startCall = StartCall(type, sources, targetDirectory)
             return startResult
         }
 
         override fun prepareDelete(sources: List<Path>): Boolean {
+            prepareDeleteCalls += 1
             prepareDeleteSources = sources
             return prepareDeleteResult
         }

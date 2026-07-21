@@ -17,6 +17,64 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+internal object FileOperationServiceIntentContract {
+    const val ACTION_START = "com.example.watchfiles.fileops.action.START"
+    const val ACTION_PREPARE_DELETE = "com.example.watchfiles.fileops.action.PREPARE_DELETE"
+    const val ACTION_FOREGROUND_ONLY = "com.example.watchfiles.fileops.action.FOREGROUND_ONLY"
+    const val EXTRA_TYPE = "extra_type"
+    const val EXTRA_SOURCES = "extra_sources"
+    const val EXTRA_TARGET_DIRECTORY = "extra_target_directory"
+}
+
+internal sealed interface FileOperationServiceIntentCommand {
+    data class ForegroundOnly(val type: FileOperationType) : FileOperationServiceIntentCommand
+
+    data class Start(
+        val type: FileOperationType,
+        val sources: List<Path>,
+        val targetDirectory: Path,
+    ) : FileOperationServiceIntentCommand
+
+    data class PrepareDelete(val sources: List<Path>) : FileOperationServiceIntentCommand
+}
+
+internal fun parseFileOperationServiceIntent(
+    action: String?,
+    type: String?,
+    sources: List<String>?,
+    targetDirectory: String?,
+): FileOperationServiceIntentCommand? {
+    return when (action) {
+        FileOperationServiceIntentContract.ACTION_FOREGROUND_ONLY -> {
+            val operationType = type
+                ?.let { value -> runCatching { FileOperationType.valueOf(value) }.getOrNull() }
+                ?: return null
+            FileOperationServiceIntentCommand.ForegroundOnly(operationType)
+        }
+        FileOperationServiceIntentContract.ACTION_START -> {
+            val operationType = type
+                ?.let { value -> runCatching { FileOperationType.valueOf(value) }.getOrNull() }
+                ?: return null
+            val parsedSources = sources
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { values -> runCatching { values.map(Paths::get) }.getOrNull() }
+                ?: return null
+            val parsedTarget = targetDirectory
+                ?.let { value -> runCatching { Paths.get(value) }.getOrNull() }
+                ?: return null
+            FileOperationServiceIntentCommand.Start(operationType, parsedSources, parsedTarget)
+        }
+        FileOperationServiceIntentContract.ACTION_PREPARE_DELETE -> {
+            val parsedSources = sources
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { values -> runCatching { values.map(Paths::get) }.getOrNull() }
+                ?: return null
+            FileOperationServiceIntentCommand.PrepareDelete(parsedSources)
+        }
+        else -> null
+    }
+}
+
 class FileOperationStateCollectionController(
     private val scope: CoroutineScope,
     private val state: StateFlow<FileOperationState>,
@@ -106,9 +164,21 @@ class FileOperationService : Service(), FileOperationServicePort {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ACTION_START) return START_NOT_STICKY
-        val request = intent.toStartRequest() ?: return START_NOT_STICKY
-        start(request.type, request.sources, request.targetDirectory)
+        val command = parseFileOperationServiceIntent(
+            action = intent?.action,
+            type = intent?.getStringExtra(FileOperationServiceIntentContract.EXTRA_TYPE),
+            sources = intent?.getStringArrayListExtra(FileOperationServiceIntentContract.EXTRA_SOURCES),
+            targetDirectory = intent?.getStringExtra(
+                FileOperationServiceIntentContract.EXTRA_TARGET_DIRECTORY,
+            ),
+        ) ?: return START_NOT_STICKY
+        when (command) {
+            is FileOperationServiceIntentCommand.ForegroundOnly -> ensureForeground(command.type)
+            is FileOperationServiceIntentCommand.Start -> {
+                start(command.type, command.sources, command.targetDirectory)
+            }
+            is FileOperationServiceIntentCommand.PrepareDelete -> prepareDelete(command.sources)
+        }
         return START_NOT_STICKY
     }
 
@@ -190,23 +260,6 @@ class FileOperationService : Service(), FileOperationServicePort {
             .setProgress(content.totalItems ?: 0, content.processedItems ?: 0, content.totalItems == null)
             .build()
 
-    private fun Intent.toStartRequest(): StartRequest? {
-        val type = getStringExtra(EXTRA_TYPE)
-            ?.let { value -> runCatching { FileOperationType.valueOf(value) }.getOrNull() }
-            ?: return null
-        val sources = getStringArrayListExtra(EXTRA_SOURCES)
-            ?.takeIf { it.isNotEmpty() }
-            ?.mapCatching(Paths::get)
-            ?: return null
-        val targetDirectory = getStringExtra(EXTRA_TARGET_DIRECTORY)
-            ?.let { value -> runCatching { Paths.get(value) }.getOrNull() }
-            ?: return null
-        return StartRequest(type, sources, targetDirectory)
-    }
-
-    private fun <T> Iterable<String>.mapCatching(transform: (String) -> T): List<T>? =
-        runCatching { map(transform) }.getOrNull()
-
     private fun FileOperationState.isTerminal(): Boolean =
         this is FileOperationState.Succeeded ||
             this is FileOperationState.PartiallySucceeded ||
@@ -217,17 +270,7 @@ class FileOperationService : Service(), FileOperationServicePort {
         fun getService(): FileOperationService = this@FileOperationService
     }
 
-    private data class StartRequest(
-        val type: FileOperationType,
-        val sources: List<Path>,
-        val targetDirectory: Path,
-    )
-
     private companion object {
-        private const val ACTION_START = "com.example.watchfiles.fileops.action.START"
-        private const val EXTRA_TYPE = "extra_type"
-        private const val EXTRA_SOURCES = "extra_sources"
-        private const val EXTRA_TARGET_DIRECTORY = "extra_target_directory"
         private const val NOTIFICATION_CHANNEL_ID = "file_operations"
         private const val NOTIFICATION_ID = 1001
     }
