@@ -2,14 +2,17 @@
 
 日期：2026-07-24
 
-状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；性能收尾和厂商交互仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，以及当前构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
+状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；
+表冠事件队列、标准 Android 触觉适配和长按触觉代码已完成本地实现与测试，但本次增量没有发现在线设备，厂商交互真机验收为
+`PENDING_DEVICE_UI`；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
+以及既有构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
 
 ## 本地 Debug 验证
 
 | 项目 | 命令/产物 | 实际结果 |
 |---|---|---|
-| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；当前 XML 报告汇总 173 tests、0 failures、0 errors、4 skipped。 |
-| Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，38 `up-to-date`。 |
+| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；当前 XML 报告汇总 178 tests、0 failures、0 errors、4 skipped。 |
+| Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，4 executed、34 up-to-date。 |
 | Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref` warning）。 |
 | 空白差异检查 | `git diff --check` | exit 0，无输出。 |
 
@@ -27,9 +30,20 @@
 ## Debug APK 可追溯性
 
 - 路径：`app/build/outputs/apk/debug/app-debug.apk`
-- 文件大小：21,220,040 bytes
-- 构建产物时间（APK `LastWriteTime`）：2026-07-24 10:44:14 +08:00
-- SHA-256（当前最终 Debug APK）：`03AF5DBCFDE3F3B89555210D9FC6661DCEBFDADBDB7BFE2BE7718E29C87FC6C1`
+- 文件大小：21,224,150 bytes
+- 构建产物时间（APK `LastWriteTime`）：2026-07-24 12:09:36 +08:00
+- SHA-256（当前最终 Debug APK）：`00BE0ED679BA9886EAD42DC0DB26F590E80CCDD830F3ED3A08B400CA64B8D8EB`
+
+## 表冠与触觉兼容增量
+
+| 项目 | 本地结果 |
+|---|---|
+| 触觉策略测试 | PASS；首次非零滚动、零消费距离、40 ms 节流窗口、边界恢复和选择模式长按策略均有 JVM 覆盖。 |
+| 表冠滚动实现 | PASS；`RoundList` 继续使用 `rotaryScrollableBehavior = null`，事件进入容量 32 的有界队列并由单消费者顺序调用 `scrollBy`。 |
+| 触觉映射 | PASS；表冠使用 `CLOCK_TICK`，非选择模式长按使用 `LONG_PRESS`，均通过 `View.performHapticFeedback`，失败静默降级。 |
+| Watch 5 厂商交互 | PENDING_DEVICE_UI；本次 `adb devices -l` 和 `adb mdns services` 均为空，没有安装本次 APK 或复用历史 serial。 |
+
+本次设备不可用，因此未把快速旋转、列表边界触觉、长按反馈强度或厂商降级行为写成已验收。
 
 ## 架构与明确边界
 
@@ -37,7 +51,7 @@
 - 大任务提醒只是执行前 gate，不改变既有单任务互斥、前台 Service 生命周期、删除二次确认或 `SafeTextWriteRepository` 的文本安全写入边界。
 - 当前 closeout 以源码、单元测试和既有真机记录为准；没有把未执行的提示页 UI、熄屏继续或压力边界写成通过。
 
-## 2026-07-24 当前 Debug APK 真机回归
+## 2026-07-24 大任务提醒增量的 Debug APK 真机回归（历史证据）
 
 | 场景 | 证据状态 | 实际结果 |
 |---|---|---|
@@ -61,7 +75,7 @@
 | 运行中 COPY 取消 | PASS | 用户已确认在真实 Watch 5 上完成。 |
 | 前台服务基础日志/通知清理 | PASS | 见 Task 6 report 的 FGS/logcat 记录。 |
 
-## 2026-07-24 当前设备重新发现
+## 2026-07-24 大任务提醒增量的设备重新发现（历史证据）
 
 | 字段 | 当前值 |
 |---|---|

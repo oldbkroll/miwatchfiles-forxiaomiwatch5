@@ -9,6 +9,8 @@
 
 M3 真机记录见 `docs/context/m3-foreground-file-operation-service-closeout.md`。2026-07-24 用户确认在线 ADB 设备为目标 Watch 5；当前构建已完成大任务 COPY/MOVE/DELETE 提醒、取消/返回、DELETE 二次确认链和普通小任务 no-warning 回归。真机写入仍限于 M1Sandbox。
 
+表冠交互与触觉代码已完成本地实现、JVM 测试、Debug 构建和 Lint；本次增量执行时 `adb devices -l` 与 `adb mdns services` 均未发现在线设备，因此厂商表冠/触觉真机验收仍为 `PENDING_DEVICE_UI`，路线项暂不标记完成。
+
 ### M3 当前边界调整
 
 - 不实现进程终止后的操作恢复、恢复日志、自动重试或任务持久化；`START_NOT_STICKY` 保持为明确边界。
