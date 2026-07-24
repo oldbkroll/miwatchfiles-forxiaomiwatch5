@@ -104,6 +104,7 @@ Expected: all policy tests pass.
 - Modify: `app/src/main/java/com/example/watchfiles/fileops/FileOperationModels.kt`
 - Modify: `app/src/main/java/com/example/watchfiles/fileops/FileOperationRunner.kt`
 - Modify: `app/src/test/java/com/example/watchfiles/fileops/FileOperationRunnerTest.kt`
+- Compatibility-only modify: `app/src/main/java/com/example/watchfiles/MainActivity.kt` and `app/src/main/java/com/example/watchfiles/fileops/FileOperationNotification.kt` so existing exhaustive `when` expressions compile after the new sealed state is added. Task 3 owns the final notification wording and Task 4 owns the final dedicated UI route.
 
 **Implementation contract**
 
