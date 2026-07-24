@@ -13,3 +13,5 @@ captures/
 askey1
 *.apk
 !app/src/**/*.apk
+docs/superpowers/
+.superpowers/
