@@ -33,7 +33,7 @@ class LargeOperationWarningTest {
             "formatted-$bytes"
         }
 
-        assertEquals("共 101 项 · 大小 formatted-1234", formatted)
+        assertEquals("共 101 项 · 总计 formatted-1234", formatted)
     }
 
     @Test

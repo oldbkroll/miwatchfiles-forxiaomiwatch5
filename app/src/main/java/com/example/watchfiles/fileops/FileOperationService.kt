@@ -109,6 +109,18 @@ class FileOperationStateCollectionController(
     fun close() = stop()
 }
 
+internal fun shouldStopServiceOnIdleCleanup(
+    state: FileOperationState,
+    foregroundStarted: Boolean,
+): Boolean = when (state) {
+    FileOperationState.Idle -> foregroundStarted
+    is FileOperationState.Succeeded,
+    is FileOperationState.PartiallySucceeded,
+    is FileOperationState.Failed,
+    is FileOperationState.Cancelled -> true
+    else -> false
+}
+
 interface FileOperationServicePort {
     val state: StateFlow<FileOperationState>
 
@@ -203,12 +215,12 @@ class FileOperationService : Service(), FileOperationServicePort {
 
     override fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean =
         adapter.start(type, sources, targetDirectory).also { accepted ->
-            if (!accepted && state.value == FileOperationState.Idle) stopForegroundIfStarted()
+            if (!accepted && state.value == FileOperationState.Idle) cleanupIdleState()
         }
 
     override fun prepareDelete(sources: List<Path>): Boolean =
         adapter.prepareDelete(sources).also { accepted ->
-            if (!accepted && state.value == FileOperationState.Idle) stopForegroundIfStarted()
+            if (!accepted && state.value == FileOperationState.Idle) cleanupIdleState()
         }
 
     override fun confirmLargeOperation(): Boolean = adapter.confirmLargeOperation()
@@ -230,15 +242,16 @@ class FileOperationService : Service(), FileOperationServicePort {
 
     private fun publishState(state: FileOperationState) {
         notificationContentFor(state)?.let { notificationManager.notify(NOTIFICATION_ID, buildNotification(it)) }
-        if (state == FileOperationState.Idle) {
+        if (state == FileOperationState.Idle || state.isTerminal()) {
+            if (state.isTerminal()) {
+                stateCollection.stop()
+            }
+            val stopService = shouldStopServiceOnIdleCleanup(state, foregroundStarted)
             notificationManager.cancel(NOTIFICATION_ID)
             stopForegroundIfStarted()
-        }
-        if (state.isTerminal()) {
-            stateCollection.stop()
-            notificationManager.cancel(NOTIFICATION_ID)
-            stopForegroundIfStarted()
-            stopSelf()
+            if (stopService) {
+                stopSelf()
+            }
         }
     }
 
@@ -254,6 +267,15 @@ class FileOperationService : Service(), FileOperationServicePort {
         if (!foregroundStarted) return
         stopForeground(STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
+    }
+
+    private fun cleanupIdleState() {
+        val stopService = shouldStopServiceOnIdleCleanup(FileOperationState.Idle, foregroundStarted)
+        notificationManager.cancel(NOTIFICATION_ID)
+        stopForegroundIfStarted()
+        if (stopService) {
+            stopSelf()
+        }
     }
 
     private fun createNotificationChannel() {

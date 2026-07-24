@@ -70,6 +70,30 @@ class FileOperationServiceTest {
         assertFalse(content.hasVibration)
     }
 
+    @Test fun idleCleanupStopsOnlyStartedForegroundServiceInstance() {
+        assertFalse(
+            shouldStopServiceOnIdleCleanup(
+                state = FileOperationState.Idle,
+                foregroundStarted = false,
+            ),
+        )
+        assertTrue(
+            shouldStopServiceOnIdleCleanup(
+                state = FileOperationState.Idle,
+                foregroundStarted = true,
+            ),
+        )
+        assertTrue(
+            shouldStopServiceOnIdleCleanup(
+                state = FileOperationState.Succeeded(
+                    FileOperationType.COPY,
+                    FileOperationResult(1, 0),
+                ),
+                foregroundStarted = false,
+            ),
+        )
+    }
+
     @Test fun servicePortAdapterForwardsEveryRunnerCommand() {
         val runner = RecordingRunnerPort()
         val adapter = FileOperationServicePortAdapter(runner)

@@ -2,7 +2,7 @@
 
 更新日期：2026-07-24
 
-当前阶段为 M3。当前 HEAD `297672b` 已完成大任务亮屏风险提示的代码与评审：Scanner 完成递归统计后，
+当前阶段为 M3。实现提交 `297672b` 已完成大任务亮屏风险提示的代码与评审：Scanner 完成递归统计后，
 Runner 会在 COPY/MOVE/DELETE 真正执行前发布 `WaitingForLargeOperationConfirmation`；DELETE 通过该 gate 后仍保留现有
 “永久删除”二次确认；提醒页取消直接回到 `Idle`，不产生终态结果、不刷新目录。前台 Service、Started + bound 的同进程
 Local Binder、重连状态桥接和低重要性通知生命周期保持不变；文本覆盖和另存为仍由 `SafeTextWriteRepository` 负责。

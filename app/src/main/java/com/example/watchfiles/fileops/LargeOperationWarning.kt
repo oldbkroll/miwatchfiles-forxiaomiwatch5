@@ -20,5 +20,5 @@ fun formatLargeOperationScale(
     formatBytes: (Long) -> String,
 ): String = when (totalBytes) {
     null -> "共 $itemCount 项 · 大小未知"
-    else -> "共 $itemCount 项 · 大小 ${formatBytes(totalBytes)}"
+    else -> "共 $itemCount 项 · 总计 ${formatBytes(totalBytes)}"
 }
