@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
@@ -105,10 +106,15 @@ import com.example.watchfiles.fileops.FileOperationType
 import com.example.watchfiles.fileops.TargetDirectoryViewModel
 import com.example.watchfiles.image.DecodedImage
 import com.example.watchfiles.image.decodeLowMemoryImage
+import com.example.watchfiles.interaction.CrownHapticPolicy
+import com.example.watchfiles.interaction.HapticCue
+import com.example.watchfiles.interaction.performWatchHaptic
 import com.example.watchfiles.text.TextDocumentMode
 import com.example.watchfiles.text.TextDocumentScreen
 import com.example.watchfiles.text.TextDocumentViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.nio.file.Path
 import java.text.DateFormat
@@ -1294,11 +1300,33 @@ internal fun RoundList(
 @Composable
 private fun Modifier.rotaryScroll(state: ScalingLazyListState): Modifier {
     val focusRequester = remember { FocusRequester() }
-    val scope = rememberCoroutineScope()
+    val eventChannel = remember {
+        Channel<Float>(
+            capacity = 32,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    }
+    val view = LocalView.current
+    val hapticPolicy = remember { CrownHapticPolicy() }
+
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    LaunchedEffect(state, eventChannel, view) {
+        for (delta in eventChannel) {
+            val consumed = state.scrollBy(delta)
+            if (hapticPolicy.shouldEmitCrownTick(consumed)) {
+                view.performWatchHaptic(HapticCue.CrownTick)
+            }
+        }
+    }
+
+    DisposableEffect(eventChannel) {
+        onDispose { eventChannel.close() }
+    }
+
     return this
         .onRotaryScrollEvent { event ->
-            scope.launch { state.scrollBy(event.verticalScrollPixels) }
+            eventChannel.trySend(event.verticalScrollPixels)
             true
         }
         .focusRequester(focusRequester)
