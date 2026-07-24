@@ -35,6 +35,7 @@ class MainActivityOperationRoutingTest {
         val conflict = FileConflict(Paths.get("/source.txt"), Paths.get("/target.txt"))
         val states = listOf(
             FileOperationState.Scanning(FileOperationType.COPY),
+            FileOperationState.WaitingForLargeOperationConfirmation(FileOperationType.COPY, 100, 8),
             FileOperationState.Running(FileOperationType.MOVE, progress),
             FileOperationState.WaitingForReplacement(FileOperationType.COPY, conflict, progress),
             FileOperationState.Cancelling(FileOperationType.DELETE, progress),
@@ -57,6 +58,32 @@ class MainActivityOperationRoutingTest {
 
         states.forEach { state ->
             assertNull(operationScreenForState(state))
+        }
+    }
+
+    @Test
+    fun onlyLargeOperationWarningCancelsAndReturnsToBrowserFromTemporaryFileOperationRoute() {
+        val conflict = FileConflict(Paths.get("/source.txt"), Paths.get("/target.txt"))
+        val cancellingStates = listOf(
+            FileOperationState.WaitingForLargeOperationConfirmation(FileOperationType.COPY, 100, 8),
+            FileOperationState.WaitingForLargeOperationConfirmation(FileOperationType.DELETE, 100, null),
+        )
+        val nonCancellingStates = listOf(
+            FileOperationState.Scanning(FileOperationType.COPY),
+            FileOperationState.Running(FileOperationType.MOVE, progress),
+            FileOperationState.WaitingForReplacement(FileOperationType.COPY, conflict, progress),
+            FileOperationState.Cancelling(FileOperationType.DELETE, progress),
+            FileOperationState.WaitingForDeleteConfirmation(
+                DeletePreview(topLevelCount = 1, itemCount = 2, totalBytes = 8),
+            ),
+            FileOperationState.Failed(FileOperationType.DELETE, result),
+        )
+
+        cancellingStates.forEach { state ->
+            assertEquals(true, shouldCancelAndReturnToBrowserFromFileOperationBack(state))
+        }
+        nonCancellingStates.forEach { state ->
+            assertEquals(false, shouldCancelAndReturnToBrowserFromFileOperationBack(state))
         }
     }
 }

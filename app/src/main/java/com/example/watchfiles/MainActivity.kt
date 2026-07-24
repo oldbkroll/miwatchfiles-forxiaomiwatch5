@@ -142,6 +142,10 @@ internal fun operationScreenForState(state: FileOperationState): AppScreen? = wh
     is FileOperationState.Cancelled -> null
 }
 
+internal fun shouldCancelAndReturnToBrowserFromFileOperationBack(
+    state: FileOperationState,
+): Boolean = state is FileOperationState.WaitingForLargeOperationConfirmation
+
 private sealed interface NameEditorRequest {
     data object CreateDirectory : NameEditorRequest
     data class Rename(val entry: FileEntry) : NameEditorRequest
@@ -384,7 +388,12 @@ private fun WatchFilesApp(
                 is FileOperationState.Cancelling -> screen = AppScreen.FILE_OPERATION
                 FileOperationState.Idle -> screen = AppScreen.BROWSER
             }
-            AppScreen.FILE_OPERATION -> Unit
+            AppScreen.FILE_OPERATION -> {
+                if (shouldCancelAndReturnToBrowserFromFileOperationBack(operationState)) {
+                    fileOperationCoordinator.cancel()
+                    screen = AppScreen.BROWSER
+                }
+            }
             AppScreen.HOME -> Unit
         }
     }

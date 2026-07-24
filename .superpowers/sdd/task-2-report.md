@@ -114,3 +114,48 @@ This confirmed the new Runner tests plus the existing Scanner, Engine, conflict,
 
 - `FileOperationScreens.kt` contains only a temporary placeholder branch for `WaitingForLargeOperationConfirmation`; Task 4 still owns the final dedicated warning UI/navigation behavior.
 - Both successful Gradle runs emitted the pre-existing SDK XML version warning, but no compilation or test blockers remained.
+
+## 2026-07-24 reviewer fix: System Back from temporary large-operation warning route
+
+### Finding addressed
+
+- `MainActivity.kt` previously routed `WaitingForLargeOperationConfirmation` to `AppScreen.FILE_OPERATION`, but the pre-fix `AppScreen.FILE_OPERATION` BackHandler branch in `HEAD` was a no-op, so System Back would not call `fileOperationCoordinator.cancel()` or return to `BROWSER`.
+
+### Fix applied
+
+- Added the smallest compatibility-only `MainActivity.kt` branch so System Back cancels and returns to `BROWSER` only when `operationState` is `WaitingForLargeOperationConfirmation` on the temporary `FILE_OPERATION` route.
+- Added a focused regression test in `MainActivityOperationRoutingTest.kt` that covers the temporary warning route and preserves existing behavior for scanning, running, replacement, cancelling, delete confirmation, and terminal states.
+
+### Verification commands and results
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --no-daemon --console=plain
+```
+
+Observed result:
+
+```text
+BUILD SUCCESSFUL in 17s
+24 actionable tasks: 24 up-to-date
+```
+
+Exit code: 0.
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.fileops.FileOperationRunnerTest" --no-daemon --console=plain
+```
+
+Observed result:
+
+```text
+BUILD SUCCESSFUL in 18s
+24 actionable tasks: 1 from cache, 23 up-to-date
+```
+
+Exit code: 0.
+
+Both runs also emitted the same pre-existing SDK XML version warning already noted above, with no failures.
