@@ -22,6 +22,7 @@ interface FileOperationRunnerPort {
 
     fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean
     fun prepareDelete(sources: List<Path>): Boolean
+    fun confirmLargeOperation(): Boolean = false
     fun confirmDelete(): Boolean
     fun replaceAll()
     fun cancel()
@@ -41,6 +42,7 @@ class FileOperationRunner(
     private var activeJob: Job? = null
     private var cancellation: OperationCancellation? = null
     private var conflictDecision: CompletableDeferred<ReplacementDecision>? = null
+    private var largeOperationConfirmation: CompletableDeferred<Boolean>? = null
     private var deleteConfirmation: CompletableDeferred<Boolean>? = null
     private var lastProgress: OperationProgress? = null
 
@@ -56,6 +58,7 @@ class FileOperationRunner(
         lastProgress = null
         _state.value = FileOperationState.Scanning(type)
         activeJob = scope.launch {
+            var returnToIdle = false
             try {
                 when (val scan = scanner.scan(request, token)) {
                     is ScanOutcome.Rejected -> {
@@ -64,7 +67,14 @@ class FileOperationRunner(
                             FileOperationResult(0, 1, listOf(scan.failure)),
                         )
                     }
-                    is ScanOutcome.Ready -> runEngine(request, scan, token)
+                    is ScanOutcome.Ready -> {
+                        token.throwIfRequested()
+                        if (!awaitLargeOperationConfirmationIfNeeded(request, scan)) {
+                            returnToIdle = true
+                        } else {
+                            runEngine(request, scan, token)
+                        }
+                    }
                 }
             } catch (_: OperationCancelledException) {
                 _state.value = FileOperationState.Cancelled(type, FileOperationResult(0, 0))
@@ -84,6 +94,8 @@ class FileOperationRunner(
                 activeJob = null
                 cancellation = null
                 conflictDecision = null
+                largeOperationConfirmation = null
+                if (returnToIdle) _state.value = FileOperationState.Idle
             }
         }
         return true
@@ -109,6 +121,11 @@ class FileOperationRunner(
                         )
                     }
                     is ScanOutcome.Ready -> {
+                        token.throwIfRequested()
+                        if (!awaitLargeOperationConfirmationIfNeeded(request, scan)) {
+                            returnToIdle = true
+                            return@launch
+                        }
                         val preview = DeletePreview(
                             topLevelCount = request.sources.distinct().size,
                             itemCount = scan.itemCount,
@@ -150,6 +167,7 @@ class FileOperationRunner(
             } finally {
                 if (activeJob === currentCoroutineContext()[Job]) activeJob = null
                 if (cancellation === token) cancellation = null
+                largeOperationConfirmation = null
                 if (confirmation != null && deleteConfirmation === confirmation) {
                     deleteConfirmation = null
                 }
@@ -163,6 +181,11 @@ class FileOperationRunner(
         conflictDecision?.complete(ReplacementDecision.REPLACE_ALL)
     }
 
+    override fun confirmLargeOperation(): Boolean {
+        if (_state.value !is FileOperationState.WaitingForLargeOperationConfirmation) return false
+        return largeOperationConfirmation?.complete(true) == true
+    }
+
     override fun confirmDelete(): Boolean {
         val current = _state.value
         if (current !is FileOperationState.WaitingForDeleteConfirmation) return false
@@ -174,6 +197,11 @@ class FileOperationRunner(
     override fun cancel() {
         val current = _state.value
         if (current is FileOperationState.Idle || current.isTerminal()) return
+        if (current is FileOperationState.WaitingForLargeOperationConfirmation) {
+            cancellation?.request()
+            largeOperationConfirmation?.complete(false)
+            return
+        }
         if (current is FileOperationState.WaitingForDeleteConfirmation) {
             cancellation?.request()
             deleteConfirmation?.complete(false)
@@ -198,6 +226,21 @@ class FileOperationRunner(
     override fun close() {
         activeJob?.cancel()
         scope.cancel()
+    }
+
+    private suspend fun awaitLargeOperationConfirmationIfNeeded(
+        request: FileOperationRequest,
+        scan: ScanOutcome.Ready,
+    ): Boolean {
+        if (!isLargeOperation(scan.itemCount, scan.totalBytes)) return true
+        val gate = CompletableDeferred<Boolean>()
+        largeOperationConfirmation = gate
+        _state.value = FileOperationState.WaitingForLargeOperationConfirmation(
+            type = request.type,
+            itemCount = scan.itemCount,
+            totalBytes = scan.totalBytes,
+        )
+        return gate.await()
     }
 
     private suspend fun runEngine(

@@ -46,6 +46,10 @@ internal fun FileOperationScreen(
                 item { ListHeader { Text("正在扫描…") } }
                 item { AppChip("取消", "停止扫描", onClick = onCancel) }
             }
+            is FileOperationState.WaitingForLargeOperationConfirmation -> {
+                item { ListHeader { Text("等待继续确认") } }
+                item { AppChip("取消", "返回原目录", onClick = onCancel) }
+            }
             is FileOperationState.Running -> {
                 val progress = state.progress
                 item { ListHeader { Text(operationTitle(state.type)) } }

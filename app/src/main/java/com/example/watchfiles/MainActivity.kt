@@ -131,6 +131,7 @@ internal enum class AppScreen {
 internal fun operationScreenForState(state: FileOperationState): AppScreen? = when (state) {
     is FileOperationState.WaitingForDeleteConfirmation -> AppScreen.DELETE_CONFIRMATION
     is FileOperationState.Scanning,
+    is FileOperationState.WaitingForLargeOperationConfirmation,
     is FileOperationState.Running,
     is FileOperationState.WaitingForReplacement,
     is FileOperationState.Cancelling -> AppScreen.FILE_OPERATION
@@ -377,6 +378,7 @@ private fun WatchFilesApp(
                 is FileOperationState.Succeeded,
                 is FileOperationState.PartiallySucceeded,
                 is FileOperationState.Cancelled -> finishPendingOperation()
+                is FileOperationState.WaitingForLargeOperationConfirmation,
                 is FileOperationState.Running,
                 is FileOperationState.WaitingForReplacement,
                 is FileOperationState.Cancelling -> screen = AppScreen.FILE_OPERATION

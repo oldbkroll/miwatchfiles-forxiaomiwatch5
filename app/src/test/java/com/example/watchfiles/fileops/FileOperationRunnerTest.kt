@@ -151,6 +151,113 @@ class FileOperationRunnerTest {
         assertEquals(0, engineCalls)
     }
 
+    @Test fun largeCopyAndMoveWaitForWarningBeforeCallingEngine() = runTest {
+        listOf(FileOperationType.COPY, FileOperationType.MOVE).forEach { type ->
+            var engineCalls = 0
+            val runner = runner(
+                scanner = OperationScannerGateway { _, _ ->
+                    ScanOutcome.Ready(LARGE_OPERATION_ITEM_THRESHOLD, 4)
+                },
+                engine = OperationEngineGateway { _, _, _, _, _ ->
+                    engineCalls += 1
+                    EngineOutcome.Completed(FileOperationResult(1, 0))
+                },
+            )
+
+            assertTrue(runner.start(type, listOf(source), target))
+            advanceUntilIdle()
+
+            assertEquals(
+                FileOperationState.WaitingForLargeOperationConfirmation(
+                    type = type,
+                    itemCount = LARGE_OPERATION_ITEM_THRESHOLD,
+                    totalBytes = 4,
+                ),
+                runner.state.value,
+            )
+            assertEquals(0, engineCalls)
+
+            assertTrue(runner.confirmLargeOperation())
+            advanceUntilIdle()
+
+            assertEquals(1, engineCalls)
+            assertTrue(runner.state.value is FileOperationState.Succeeded)
+        }
+    }
+
+    @Test fun largeDeleteReachesDeleteConfirmationOnlyAfterWarningConfirmation() = runTest {
+        var engineCalls = 0
+        val runner = runner(
+            scanner = OperationScannerGateway { _, _ ->
+                ScanOutcome.Ready(LARGE_OPERATION_ITEM_THRESHOLD, 12)
+            },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                engineCalls += 1
+                EngineOutcome.Completed(FileOperationResult(1, 0))
+            },
+        )
+
+        assertTrue(runner.prepareDelete(listOf(source)))
+        advanceUntilIdle()
+
+        assertEquals(
+            FileOperationState.WaitingForLargeOperationConfirmation(
+                type = FileOperationType.DELETE,
+                itemCount = LARGE_OPERATION_ITEM_THRESHOLD,
+                totalBytes = 12,
+            ),
+            runner.state.value,
+        )
+        assertEquals(0, engineCalls)
+
+        assertTrue(runner.confirmLargeOperation())
+        advanceUntilIdle()
+
+        assertTrue(runner.state.value is FileOperationState.WaitingForDeleteConfirmation)
+        assertEquals(0, engineCalls)
+    }
+
+    @Test fun warningCancelReturnsIdleWithoutTerminalResultOrEngineCall() = runTest {
+        var engineCalls = 0
+        val runner = runner(
+            scanner = OperationScannerGateway { _, _ ->
+                ScanOutcome.Ready(LARGE_OPERATION_ITEM_THRESHOLD, 8)
+            },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                engineCalls += 1
+                EngineOutcome.Completed(FileOperationResult(1, 0))
+            },
+        )
+
+        assertTrue(runner.start(FileOperationType.COPY, listOf(source), target))
+        advanceUntilIdle()
+
+        assertTrue(runner.state.value is FileOperationState.WaitingForLargeOperationConfirmation)
+
+        runner.cancel()
+        advanceUntilIdle()
+
+        assertEquals(FileOperationState.Idle, runner.state.value)
+        assertEquals(0, engineCalls)
+    }
+
+    @Test fun smallTransferKeepsDirectExecutionPath() = runTest {
+        var engineCalls = 0
+        val runner = runner(
+            scanner = OperationScannerGateway { _, _ -> ScanOutcome.Ready(1, 4) },
+            engine = OperationEngineGateway { _, _, _, _, _ ->
+                engineCalls += 1
+                EngineOutcome.Completed(FileOperationResult(1, 0))
+            },
+        )
+
+        assertTrue(runner.start(FileOperationType.COPY, listOf(source), target))
+        advanceUntilIdle()
+
+        assertEquals(1, engineCalls)
+        assertTrue(runner.state.value is FileOperationState.Succeeded)
+    }
+
     @Test fun deleteCancelBeforeConfirmationReturnsIdleWithoutDeleting() = runTest {
         var engineCalls = 0
         val runner = runner(

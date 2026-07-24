@@ -18,6 +18,8 @@ fun notificationContentFor(state: FileOperationState): FileOperationNotification
     -> null
 
     is FileOperationState.Scanning -> notificationContent(state.type, "正在准备", null)
+    is FileOperationState.WaitingForLargeOperationConfirmation ->
+        notificationContent(state.type, "等待确认", null)
     is FileOperationState.Running -> notificationContent(state.type, state.progress.currentName, state.progress)
     is FileOperationState.WaitingForReplacement ->
         notificationContent(state.type, state.progress.currentName, state.progress)

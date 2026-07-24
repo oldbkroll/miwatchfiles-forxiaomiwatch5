@@ -60,6 +60,11 @@ sealed interface FileOperationState {
     data object Idle : FileOperationState
     data class Scanning(val type: FileOperationType) : FileOperationState
     data class Running(val type: FileOperationType, val progress: OperationProgress) : FileOperationState
+    data class WaitingForLargeOperationConfirmation(
+        val type: FileOperationType,
+        val itemCount: Int,
+        val totalBytes: Long?,
+    ) : FileOperationState
     data class WaitingForReplacement(
         val type: FileOperationType,
         val conflict: FileConflict,
