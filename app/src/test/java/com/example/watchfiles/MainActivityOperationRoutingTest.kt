@@ -31,11 +31,21 @@ class MainActivityOperationRoutingTest {
     }
 
     @Test
+    fun routesLargeOperationConfirmationStateToLargeOperationConfirmationScreen() {
+        val state = FileOperationState.WaitingForLargeOperationConfirmation(
+            FileOperationType.COPY,
+            100,
+            null,
+        )
+
+        assertEquals(AppScreen.LARGE_OPERATION_CONFIRMATION, operationScreenForState(state))
+    }
+
+    @Test
     fun routesActiveOperationStatesToFileOperationScreen() {
         val conflict = FileConflict(Paths.get("/source.txt"), Paths.get("/target.txt"))
         val states = listOf(
             FileOperationState.Scanning(FileOperationType.COPY),
-            FileOperationState.WaitingForLargeOperationConfirmation(FileOperationType.COPY, 100, 8),
             FileOperationState.Running(FileOperationType.MOVE, progress),
             FileOperationState.WaitingForReplacement(FileOperationType.COPY, conflict, progress),
             FileOperationState.Cancelling(FileOperationType.DELETE, progress),

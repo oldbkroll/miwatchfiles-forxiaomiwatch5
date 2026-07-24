@@ -124,14 +124,15 @@ internal enum class AppScreen {
     DEVICE_INFO,
     NAME_EDITOR,
     TARGET_DIRECTORY,
+    LARGE_OPERATION_CONFIRMATION,
     DELETE_CONFIRMATION,
     FILE_OPERATION,
 }
 
 internal fun operationScreenForState(state: FileOperationState): AppScreen? = when (state) {
+    is FileOperationState.WaitingForLargeOperationConfirmation -> AppScreen.LARGE_OPERATION_CONFIRMATION
     is FileOperationState.WaitingForDeleteConfirmation -> AppScreen.DELETE_CONFIRMATION
     is FileOperationState.Scanning,
-    is FileOperationState.WaitingForLargeOperationConfirmation,
     is FileOperationState.Running,
     is FileOperationState.WaitingForReplacement,
     is FileOperationState.Cancelling -> AppScreen.FILE_OPERATION
@@ -372,6 +373,10 @@ private fun WatchFilesApp(
                 }
             }
             AppScreen.TARGET_DIRECTORY -> screen = AppScreen.BROWSER
+            AppScreen.LARGE_OPERATION_CONFIRMATION -> {
+                fileOperationCoordinator.cancel()
+                screen = AppScreen.BROWSER
+            }
             AppScreen.DELETE_CONFIRMATION -> when (operationState) {
                 is FileOperationState.Scanning,
                 is FileOperationState.WaitingForDeleteConfirmation -> {
@@ -540,6 +545,14 @@ private fun WatchFilesApp(
                 ) screen = AppScreen.FILE_OPERATION
             },
             onCancel = { screen = AppScreen.BROWSER },
+        )
+        AppScreen.LARGE_OPERATION_CONFIRMATION -> LargeOperationConfirmationScreen(
+            state = operationState,
+            onContinue = fileOperationCoordinator::confirmLargeOperation,
+            onCancel = {
+                fileOperationCoordinator.cancel()
+                screen = AppScreen.BROWSER
+            },
         )
         AppScreen.DELETE_CONFIRMATION -> DeleteConfirmationScreen(
             state = operationState,
