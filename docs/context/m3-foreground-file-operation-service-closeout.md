@@ -3,7 +3,7 @@
 日期：2026-07-24
 
 状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；
-表冠事件队列、无连续滚动震动的边界短反馈、标准 Android 触觉适配和长按触觉代码已完成本地实现、测试及当前 Watch 5 受限回归；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
+表冠事件队列、无连续滚动震动的边界短反馈、标准 Android 触觉适配和长按触觉代码已完成本地实现、测试及当前 Watch 5 受限回归；启动/内存/目录性能收尾也已完成当前范围内的只读复测。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
 以及既有构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
 
 ## 本地 Debug 验证
@@ -15,7 +15,41 @@
 | Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref` warning）。 |
 | 空白差异检查 | `git diff --check` | exit 0，无输出。 |
 
-所有 Gradle 命令均显示同一条非致命环境警告：当前 SDK command-line tools 只理解至 SDK XML v3，但检测到 v4 XML。未运行 Release 构建。
+所有 Gradle 命令均显示同一条非致命环境警告：当前 SDK command-line tools 只理解至 SDK XML v3，但检测到 v4 XML。Debug gate 本身不包含 Release 构建；正式 Release 交接见下节。
+
+## Release 交接
+
+2026-07-24 已使用本机未提交的 `askey1` PKCS12 keystore 构建正式 Release。keystore 别名为 `key0`，不纳入 Git 或 GitHub；构建密码仅通过本机 Gradle 属性注入。
+
+| 项目 | 实际结果 |
+|---|---|
+| Release 构建 | `:app:assembleRelease --no-daemon --console=plain` exit 0，`BUILD SUCCESSFUL` |
+| Release APK | `app/build/outputs/apk/release/app-release.apk` |
+| 正式版本 | `0.3.1`，versionCode `6`，targetSdk `29`，包名 `com.example.watchfiles` |
+| APK 产物 | `2,069,824 bytes`；SHA-256 `8601828C247A614891D0EDCC3A15C70ED1E306AE09F5263911473BA07EF2AE27`；构建时间 `2026-07-24 17:01:38 +08:00` |
+| APK 签名 | `apksigner verify` PASS；APK Signature Scheme v2=true，1 个 signer |
+| 证书主体 | `C=86, ST=hebei, L=langfang, OU=zhongshanspace, CN=oldbkroll` |
+| 证书 SHA-256 | `86:3A:13:57:E2:22:FE:BE:2F:53:AB:27:EC:60:13:8D:47:E2:54:D1:A6:F5:F5:B4:6E:B0:6A:2D:A2:0F:45:9F` |
+
+## 2026-07-24 启动、内存和目录加载性能收尾
+
+本次会话使用动态发现的 mDNS serial `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，设备为
+`M2505W1` / `grasslte` / Android 14 / API 34 / `armeabi-v7a,armeabi`。安装并运行当前 Debug APK
+`com.example.watchfiles.debug`，没有创建、删除、复制、移动或修改设备文件。
+
+| 项目 | 实际结果 |
+|---|---|
+| 冷启动 5 次 | `3617/3580/3593/3595/3596 ms`，中位数 `3595 ms`；5/5 为 `LaunchState=COLD`、状态 `ok` |
+| 热启动 5 次 | 厂商系统返回 `LaunchState=UNKNOWN (0)`，只记录 `WaitTime=45–125 ms`；不把它伪装成可靠的 `TotalTime` 指标 |
+| 目录加载 | 主页、内部存储、Download、WatchFilesTest、M1Sandbox、CopySource 和父目录均成功加载；固定文件夹优先/名称排序可见，无读取失败提示 |
+| 文件详情与文本 | `known.txt` 详情显示正常；UTF-8 文本页显示 `字节 0–29 / 29` 和原文内容，返回文件详情/目录正常 |
+| 选择交互 | `known.txt` 长按进入 `已选 1 项`，显示复制/移动/删除入口；返回键退出选择，未启动文件写入 |
+| 图片预览 | `large-sample.jpg` 显示 `4000×3000 · 预览 960×720`；5 轮预览 PSS 为 `73095/73179/74671/74699/74735 KiB`，首尾增加 `1640 KiB`，退出回到详情为 `72699 KiB` |
+| 进程错误审计 | 清空日志后启动、目录进入/返回审计，按应用 PID 过滤没有 `AndroidRuntime`、`FATAL EXCEPTION`、`OutOfMemoryError`、`Exception` 或 `Error` 匹配 |
+| 最终 PSS | 清空日志后的最终导航回到主页，`TOTAL PSS=57696 KiB`；进程仍存活 |
+| 设备文件审计 | M1Sandbox 顶层清单与测试前一致；本次没有新增临时残留或写入 |
+
+本次性能收尾以“当前 Debug 构建在目标 Watch 5 上无明显启动、目录加载或内存异常”为完成标准；未宣称固定的热启动耗时、熄屏继续、进程恢复或大规模压力边界。
 
 ## 大任务提醒语义（来自当前源码与测试）
 
@@ -29,7 +63,7 @@
 ## Debug APK 可追溯性
 
 - 路径：`app/build/outputs/apk/debug/app-debug.apk`
-- 文件大小：21,224,150 bytes
+- 文件大小：21,224,202 bytes
 - 构建产物时间（APK `LastWriteTime`）：2026-07-24 12:32:18 +08:00
 - SHA-256（当前最终 Debug APK）：`A819128CFD68AAC8E76ED55A897C2A957D3D93E7AD990A79DFFE9D36105C69CF`
 

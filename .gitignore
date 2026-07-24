@@ -10,5 +10,6 @@ captures/
 *.log
 *.jks
 *.keystore
+askey1
 *.apk
 !app/src/**/*.apk
