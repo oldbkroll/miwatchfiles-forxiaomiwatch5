@@ -1,50 +1,112 @@
-# Task 5 Report — DELETE Progress, Cancellation Text, and Result Refresh
+# Task 5 Report — Documentation and Evidence Sync for the M3 Large Operation Warning
 
-## Changed Files
+## Scope
 
-- `app/src/main/java/com/example/watchfiles/FileOperationScreens.kt`
-  - Added exhaustive DELETE-specific operation, cancellation, and terminal-title helpers while preserving every existing COPY/MOVE label.
-  - DELETE now renders `正在删除`, a non-recoverable cancellation warning, and DELETE terminal titles. The terminal result continues to show completed/failed counts and the first failure or warning, including the engine-provided `删除已取消，部分内容可能已删除` message.
-  - The `WaitingForDeleteConfirmation` fallback is non-destructive (`等待删除确认…`); confirmation remains solely in `DeleteConfirmationScreen`. A defensive DELETE replacement state renders no replacement controls.
-- `app/src/main/java/com/example/watchfiles/MainActivity.kt`
-  - `finishPendingOperation` now resets `pendingOperationType` to `COPY` after refreshing, consuming the terminal result, and clearing pending sources.
-  - Existing Back behavior is preserved: terminal return paths refresh and consume; active `FILE_OPERATION` does not hide DELETE.
-- `app/src/test/java/com/example/watchfiles/fileops/FileOperationCoordinatorTest.kt`
-  - Renamed and strengthened the DELETE execution-cancellation regression test. It verifies that cancellation exposes `Cancelling` before resolving to DELETE `Cancelled`.
+- Modified `docs/TESTING.md`
+- Modified `docs/roadmap.md`
+- Modified `docs/superpowers/roadmap/PROJECT_PLAN.md`
+- Modified `docs/context/current-development-context.md`
+- Modified `docs/context/m3-foreground-file-operation-service-closeout.md`
 
-## TDD / Regression Evidence
+No Android source or test files were changed. No ADB write, APK install, Release build, push, or device filesystem mutation was performed for this task.
 
-The Task 5 brief's requested coordinator behavior was already implemented by the Task 4 baseline commit `1cb2a4c`, which also contained a confirmed-DELETE cancellation test. Consequently, the strengthened regression test was GREEN on the baseline rather than producing a valid RED for this UI-only task.
+## Evidence used
 
-The brief's `while (!token.isRequested()) yield()` form was attempted first. Under `runCurrent()` and the coroutine test scheduler it rescheduled indefinitely at the current virtual time, so it self-spun and produced no test XML. With user approval, it was replaced by `delay(1)`, an equivalent controlled suspension that allows the test to observe `Cancelling` and then drive the cancellation outcome.
+### Local Debug gate
 
-```powershell
-.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.fileops.FileOperationCoordinatorTest.deleteCancelDuringExecutionMapsToCancelled" --no-daemon --console=plain
-```
+Source: `.superpowers/sdd/task-5a-report.md`
 
-Result: `BUILD SUCCESSFUL` (20 s). This is executable GREEN evidence for the pre-existing coordinator contract.
+- `:app:testDebugUnitTest` — PASS
+- `:app:assembleDebug` — PASS
+- `:app:lintDebug` — PASS
+- `git diff --check` — PASS
+- Parsed totals: `172 tests / 0 failures / 0 errors / 4 skipped`
+- Lint: exactly 2 warnings, both pre-existing `ApplySharedPref` warnings in `TextTransactionJournal.kt` lines 22 and 33
+- Debug APK SHA-256: `5743D82C60B8C1021B9C93208817B49E755135C82D6D365CA4A87529286E83FE`
 
-## Complete Debug Verification
+### Current ADB rediscovery
 
-```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon --console=plain
-```
+Source: `.superpowers/sdd/task-5a-report.md`
 
-Result: `BUILD SUCCESSFUL` (56 s; 54 actionable tasks, 16 executed).
+- `adb devices -l` returned one online transport:
+  `192.168.31.60:38935 product:grasslte model:M2505W1 device:grasslte`
+- This transport could not be safely confirmed as the current Xiaomi Watch 5.
+- Result: no install, no constrained device regression, and no warning-page UI claim for the current APK.
+- Required device status for this build remains `PENDING_DEVICE_UI`.
 
-XML and whitespace checks:
+### Source and test inspection used for doc precision
 
-- `TEST_SUITES=12`
-- `TEST_CASES=93`
-- `TEST_FAILURES=0`
-- `TEST_ERRORS=0`
-- `LINT_ISSUE_NODES=0`
-- `git diff --check`: no output / no whitespace errors.
+- `LargeOperationWarning.kt` defines the exact thresholds:
+  `itemCount >= 100` or known `totalBytes >= 52,428,800` bytes.
+- `FileOperationScanner.kt` shows recursive `itemCount` semantics: count top-level sources, directories, files, and symlink nodes themselves.
+- `ScanOutcome.Ready.totalBytes` becomes `null` when any size is unknown; the UI must render “大小未知”, not `0 bytes`.
+- `FileOperationRunner.kt` and `FileOperationRunnerTest.kt` show that:
+  - COPY/MOVE wait at the warning gate before Engine execution
+  - DELETE still goes through its existing permanent-delete confirmation after the warning
+  - warning cancel returns directly to `Idle` without a terminal result or refresh
 
-The Android SDK XML compatibility warning remained non-fatal: the installed command-line tools understand SDK XML through version 3 and encountered version 4.
+### Prior real-watch evidence that stale docs needed to recover
 
-## Platform and Safety Checks
+Per the user-confirmed M3 history, the real Watch 5 evidence already covers:
 
-- Unchanged: `targetSdk = 29`, `android:requestLegacyExternalStorage="true"`, and sole `armeabi-v7a` ABI.
-- Unchanged Xiaomi crown path: `rotaryScrollableBehavior = null` and `onRotaryScrollEvent` remain present.
-- Debug-only local verification was used. No Release build, ADB command, device connection, installation, or device filesystem operation was performed.
+- ordinary COPY/MOVE/DELETE
+- conflict cancel
+- replacement-all
+- running COPY cancellation
+
+These are now reflected as historical completed evidence rather than left as stale pending items.
+
+## Documentation changes
+
+### `docs/TESTING.md`
+
+- Expanded the M3 section to cover both the foreground service and the large-operation warning.
+- Recorded the exact local gate evidence and APK hash from Task 5A.
+- Documented the exact thresholds, recursive `itemCount` behavior, null-size handling, and the no-stress boundary (`100 items`, `50 MiB`, and `5000 items` were not run as device fixtures).
+- Kept the current-build device warning-page evidence explicitly `PENDING_DEVICE_UI`.
+
+### `docs/roadmap.md`
+
+- Kept the large-operation warning roadmap item open because the current APK was not verified on a safely identified Watch 5.
+- Replaced stale language that still implied conflict/replacement/running-cancel were unverified on real hardware.
+- Added the exact threshold bytes and the explicit no-stress boundary wording.
+
+### `docs/superpowers/roadmap/PROJECT_PLAN.md`
+
+- Mirrored the roadmap corrections in the canonical project-plan copy.
+- Preserved the M3 boundary: no persistence, no automatic retry, no process-recovery claim, and no stress-fixture overclaim.
+
+### `docs/context/current-development-context.md`
+
+- Updated the date to 2026-07-24.
+- Recorded that HEAD `297672b` has the large-operation warning implementation and local verification complete.
+- Replaced the stale APK hash and test totals with the current Task 5A evidence.
+- Distinguished historical real-watch evidence from the current-build `PENDING_DEVICE_UI` state.
+
+### `docs/context/m3-foreground-file-operation-service-closeout.md`
+
+- Reframed the closeout around three evidence buckets:
+  - current local Debug gate
+  - source/test-confirmed warning semantics
+  - historical real-Watch-5 evidence
+- Added the current APK traceability data.
+- Removed stale pending language for conflict cancel / replacement-all / running COPY cancellation.
+- Kept the dedicated warning-page verification, ordinary rerun for this APK, screen-off continuation, process recovery, persistence, automatic retry, and stress testing explicitly out of the completed column.
+
+## Remaining `PENDING_DEVICE_UI`
+
+- Verify the dedicated large-operation warning page on a safely identified Xiaomi Watch 5 for the current APK.
+- Re-run the ordinary small-task no-warning path on that same safely identified device for the current APK.
+
+## Explicit non-goals / not completed
+
+- No claim of process recovery after process death
+- No claim of persistent task state
+- No claim of automatic retry
+- No claim of guaranteed screen-off continuation
+- No `100-item`, `50 MiB`, or `5000-item` stress-fixture verification
+
+## Concerns
+
+- The documentation now accurately separates historical real-watch evidence from current-build evidence, but that still leaves the feature in a mixed state: implementation and local gates are complete, while current-build device UI evidence is not.
+- Because the only online ADB transport on 2026-07-24 could not be safely confirmed as the current Watch 5, any stronger device claim would be an overstatement.
