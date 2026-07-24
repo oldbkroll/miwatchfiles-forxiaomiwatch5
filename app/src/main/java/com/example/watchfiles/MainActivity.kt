@@ -1319,8 +1319,8 @@ private fun Modifier.rotaryScroll(state: ScalingLazyListState): Modifier {
     LaunchedEffect(state, eventChannel, view) {
         for (delta in eventChannel) {
             val consumed = state.scrollBy(delta)
-            if (hapticPolicy.shouldEmitCrownTick(consumed)) {
-                view.performWatchHaptic(HapticCue.CrownTick)
+            if (hapticPolicy.boundaryReached(deltaPixels = delta, consumedPixels = consumed) != null) {
+                view.performWatchHaptic(HapticCue.ScrollBoundary)
             }
         }
     }

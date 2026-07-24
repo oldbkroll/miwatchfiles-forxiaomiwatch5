@@ -3,7 +3,7 @@
 日期：2026-07-24
 
 状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；
-表冠事件队列、标准 Android 触觉适配和长按触觉代码已完成本地实现、测试及当前 Watch 5 受限回归；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
+表冠事件队列、无连续滚动震动的边界短反馈、标准 Android 触觉适配和长按触觉代码已完成本地实现、测试及当前 Watch 5 受限回归；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
 以及既有构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
 
 ## 本地 Debug 验证
@@ -30,21 +30,21 @@
 
 - 路径：`app/build/outputs/apk/debug/app-debug.apk`
 - 文件大小：21,224,150 bytes
-- 构建产物时间（APK `LastWriteTime`）：2026-07-24 12:09:36 +08:00
-- SHA-256（当前最终 Debug APK）：`00BE0ED679BA9886EAD42DC0DB26F590E80CCDD830F3ED3A08B400CA64B8D8EB`
+- 构建产物时间（APK `LastWriteTime`）：2026-07-24 12:32:18 +08:00
+- SHA-256（当前最终 Debug APK）：`A819128CFD68AAC8E76ED55A897C2A957D3D93E7AD990A79DFFE9D36105C69CF`
 
 ## 表冠与触觉兼容增量
 
 | 项目 | 本地结果 |
 |---|---|
-| 触觉策略测试 | PASS；首次非零滚动、零消费距离、40 ms 节流窗口、边界恢复和选择模式长按策略均有 JVM 覆盖。 |
+| 触觉策略测试 | PASS；正常滚动无反馈、顶部/底部各一次、离开边界后可再次反馈和选择模式长按策略均有 JVM 覆盖。 |
 | 表冠滚动实现 | PASS；`RoundList` 继续使用 `rotaryScrollableBehavior = null`，事件进入容量 32 的有界队列并由单消费者顺序调用 `scrollBy`。 |
-| 触觉映射 | PASS；表冠使用 `CLOCK_TICK`，非选择模式长按使用 `LONG_PRESS`，均通过 `View.performHapticFeedback`，失败静默降级。 |
-| Watch 5 厂商交互 | PASS；动态 serial 为 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，rotary encoder 滚动、反向回滚、边界输入、长按选择和重复长按均通过。 |
-| Watch 5 触觉平台 | PASS；`vibrator_manager list` 返回 1，`feedback 4`/`feedback 0` 均 exit 0；物理触觉强度未作主观量化。 |
+| 触觉映射 | PASS；表冠边界使用 `VIRTUAL_KEY`，非选择模式长按使用 `LONG_PRESS`，均通过 `View.performHapticFeedback`，失败静默降级。连续表冠滚动不再发送 `CLOCK_TICK`。 |
+| Watch 5 厂商交互 | PASS；动态 serial 为 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，普通 rotary 滚动无连续震动，底部/顶部各一次短反馈，长按选择和重复长按均通过。 |
+| Watch 5 触觉平台 | PASS；边界记录为两次 `Primitive=TICK`、17–18 ms；安装后没有新的 `TEXTURE_TICK` 长触觉请求；物理触觉强度未作主观量化。 |
 | Watch 5 崩溃/文件审计 | PASS；进程仍在前台，`AndroidRuntime` 为空，未新增任务临时残留，既有用户 `.part` 文件未修改。 |
 
-本次回归不把触觉强度或熄屏继续能力写成产品性承诺；未执行文件写操作或压力夹具。
+本次回归不把触觉强度或熄屏继续能力写成产品性承诺；未执行文件写操作或压力夹具。此前旧 APK 的 `CLOCK_TICK` 长触觉历史记录不计入本次结果。
 
 ## 架构与明确边界
 

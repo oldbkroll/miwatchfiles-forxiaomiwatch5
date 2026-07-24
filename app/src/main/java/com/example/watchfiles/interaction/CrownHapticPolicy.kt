@@ -1,22 +1,26 @@
 package com.example.watchfiles.interaction
 
-internal const val DEFAULT_CROWN_HAPTIC_INTERVAL_MILLIS = 40L
+enum class CrownBoundary {
+    Top,
+    Bottom,
+}
 
-class CrownHapticPolicy(
-    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L },
-    private val minIntervalMillis: Long = DEFAULT_CROWN_HAPTIC_INTERVAL_MILLIS,
-) {
-    private var lastCrownTickAt: Long? = null
+class CrownHapticPolicy {
+    private var lastBoundary: CrownBoundary? = null
 
-    fun shouldEmitCrownTick(consumedPixels: Float): Boolean {
-        if (consumedPixels == 0f) return false
+    fun boundaryReached(deltaPixels: Float, consumedPixels: Float): CrownBoundary? {
+        if (deltaPixels == 0f) return null
 
-        val now = clockMillis()
-        val last = lastCrownTickAt
-        if (last != null && now - last < minIntervalMillis) return false
+        if (consumedPixels != 0f) {
+            lastBoundary = null
+            return null
+        }
 
-        lastCrownTickAt = now
-        return true
+        val boundary = if (deltaPixels > 0f) CrownBoundary.Top else CrownBoundary.Bottom
+        if (lastBoundary == boundary) return null
+
+        lastBoundary = boundary
+        return boundary
     }
 }
 

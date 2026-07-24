@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
 
-**Goal:** 在不触发 Watch 5 缺失 Wear 触觉类的前提下，稳定快速表冠滚动，并为有效表冠滚动和长按进入文件选择模式提供可降级的系统触觉反馈。
+**Goal:** 在不触发 Watch 5 缺失 Wear 触觉类的前提下，稳定快速表冠滚动，并仅为列表顶部/底部到达和长按进入文件选择模式提供可降级的系统触觉反馈。
 
-**Architecture:** 保留 RoundList 的自定义 onRotaryScrollEvent 路径，将旋转像素放入有界 Channel，单个 LaunchedEffect 顺序调用 ScalingLazyListState.scrollBy。纯 Kotlin CrownHapticPolicy 只判断是否允许反馈；Android View.performHapticFeedback 适配器负责映射 CLOCK_TICK 和 LONG_PRESS，失败时返回 false 但不影响交互。
+**Architecture:** 保留 RoundList 的自定义 onRotaryScrollEvent 路径，将旋转像素放入有界 Channel，单个 LaunchedEffect 顺序调用 ScalingLazyListState.scrollBy。纯 Kotlin CrownHapticPolicy 只在未消费事件指向顶部/底部且同一边界尚未反馈时允许一次反馈；Android View.performHapticFeedback 适配器负责映射 VIRTUAL_KEY 和 LONG_PRESS，失败时返回 false 但不影响交互。
 
 **Tech Stack:** Kotlin 2.0.21、Jetpack Compose/Wear Compose 1.4.1、Kotlin Coroutines 1.9.0、Android View.performHapticFeedback、JUnit 4、Gradle Debug build、Android Lint、动态 ADB Watch 5 真机验收。
 
@@ -13,7 +13,7 @@
 - 保留 rotaryScrollableBehavior = null，不得恢复依赖 com.google.wear.input.WearHapticFeedbackConstants 的 Wear Compose 默认旋转路径。
 - 不新增震动权限、第三方依赖、Wear OS 服务或厂商私有 SDK。
 - 表冠事件使用有界队列和单消费者；不为每个旋转事件新建协程。
-- 只有实际滚动消费距离非零且通过 40 ms 节流时才发送 CLOCK_TICK。
+- 正常表冠滚动不发送触觉；未消费的顶部/底部边界事件每次到达只发送一次 `VIRTUAL_KEY`。
 - 只有非选择模式长按文件卡片进入选择模式时才发送一次 LONG_PRESS。
 - View.performHapticFeedback 返回 false 或抛出异常时静默降级，不阻止滚动或选择。
 - 不改变目录排序、选择、多选、全选、系统返回键和文件操作安全语义。
@@ -32,9 +32,9 @@
 - Test: app/src/test/java/com/example/watchfiles/interaction/CrownHapticPolicyTest.kt
 
 **Interfaces:**
-- Produces CrownHapticPolicy(clockMillis: () -> Long = { System.nanoTime() / 1_000_000L }, minIntervalMillis: Long = 40L) with shouldEmitCrownTick(consumedPixels: Float): Boolean.
+- Produces CrownHapticPolicy with boundaryReached(deltaPixels: Float, consumedPixels: Float): CrownBoundary?.
 - Produces shouldEmitLongPressHaptic(selectionMode: Boolean): Boolean.
-- Produces enum class HapticCue { CrownTick, LongPress } and fun View.performWatchHaptic(cue: HapticCue): Boolean.
+- Produces enum class HapticCue { ScrollBoundary, LongPress } and fun View.performWatchHaptic(cue: HapticCue): Boolean.
 
 - [ ] **Step 1: Write the failing policy tests**
 
@@ -43,45 +43,56 @@ Create CrownHapticPolicyTest.kt:
 ~~~kotlin
 package com.example.watchfiles.interaction
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CrownHapticPolicyTest {
     @Test
-    fun firstNonZeroScrollAllowsCrownTick() {
-        val policy = CrownHapticPolicy(clockMillis = { 1_000L })
+    fun crownScrollDoesNotEmitContinuousHaptic() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 12f))
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = -12f))
     }
 
     @Test
-    fun zeroConsumedScrollDoesNotAllowCrownTick() {
-        val policy = CrownHapticPolicy(clockMillis = { 1_000L })
+    fun reachingTopEmitsOneBoundaryCue() {
+        val policy = CrownHapticPolicy()
 
-        assertFalse(policy.shouldEmitCrownTick(consumedPixels = 0f))
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f))
     }
 
     @Test
-    fun crownTickIsSuppressedInsideFortyMillisecondWindow() {
-        var now = 1_000L
-        val policy = CrownHapticPolicy(clockMillis = { now })
+    fun reachingBottomEmitsOneBoundaryCue() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
-        now = 1_039L
-
-        assertFalse(policy.shouldEmitCrownTick(consumedPixels = 1f))
+        assertEquals(
+            CrownBoundary.Bottom,
+            policy.boundaryReached(deltaPixels = -12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = 0f))
     }
 
     @Test
-    fun crownTickIsAllowedAtFortyMillisecondBoundary() {
-        var now = 1_000L
-        val policy = CrownHapticPolicy(clockMillis = { now })
+    fun boundaryCueCanEmitAgainAfterLeavingAndReturning() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
-        now = 1_040L
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = -12f))
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
     }
 
     @Test
@@ -109,23 +120,26 @@ Create CrownHapticPolicy.kt:
 ~~~kotlin
 package com.example.watchfiles.interaction
 
-internal const val DEFAULT_CROWN_HAPTIC_INTERVAL_MILLIS = 40L
+enum class CrownBoundary {
+    Top,
+    Bottom,
+}
 
-class CrownHapticPolicy(
-    private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L },
-    private val minIntervalMillis: Long = DEFAULT_CROWN_HAPTIC_INTERVAL_MILLIS,
-) {
-    private var lastCrownTickAt: Long? = null
+class CrownHapticPolicy {
+    private var lastBoundary: CrownBoundary? = null
 
-    fun shouldEmitCrownTick(consumedPixels: Float): Boolean {
-        if (consumedPixels == 0f) return false
+    fun boundaryReached(deltaPixels: Float, consumedPixels: Float): CrownBoundary? {
+        if (deltaPixels == 0f) return null
+        if (consumedPixels != 0f) {
+            lastBoundary = null
+            return null
+        }
 
-        val now = clockMillis()
-        val last = lastCrownTickAt
-        if (last != null && now - last < minIntervalMillis) return false
+        val boundary = if (deltaPixels > 0f) CrownBoundary.Top else CrownBoundary.Bottom
+        if (lastBoundary == boundary) return null
 
-        lastCrownTickAt = now
-        return true
+        lastBoundary = boundary
+        return boundary
     }
 }
 
@@ -141,14 +155,14 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 
 enum class HapticCue {
-    CrownTick,
+    ScrollBoundary,
     LongPress,
 }
 
 fun View.performWatchHaptic(cue: HapticCue): Boolean = runCatching {
     performHapticFeedback(
         when (cue) {
-            HapticCue.CrownTick -> HapticFeedbackConstants.CLOCK_TICK
+            HapticCue.ScrollBoundary -> HapticFeedbackConstants.VIRTUAL_KEY
             HapticCue.LongPress -> HapticFeedbackConstants.LONG_PRESS
         },
     )
@@ -171,7 +185,7 @@ Expected: one commit containing only the policy, adapter, and JVM tests.
 
 ---
 
-### Task 2: Serialize custom rotary scrolling and add crown tick feedback
+### Task 2: Serialize custom rotary scrolling and add boundary feedback
 
 **Files:**
 - Modify: app/src/main/java/com/example/watchfiles/MainActivity.kt in imports and rotaryScroll.
@@ -217,8 +231,8 @@ private fun Modifier.rotaryScroll(state: ScalingLazyListState): Modifier {
     LaunchedEffect(state, eventChannel, view) {
         for (delta in eventChannel) {
             val consumed = state.scrollBy(delta)
-            if (hapticPolicy.shouldEmitCrownTick(consumed)) {
-                view.performWatchHaptic(HapticCue.CrownTick)
+            if (hapticPolicy.boundaryReached(deltaPixels = delta, consumedPixels = consumed) != null) {
+                view.performWatchHaptic(HapticCue.ScrollBoundary)
             }
         }
     }
@@ -409,7 +423,7 @@ Expected: only intended source, tests, and evidence documents are staged; no APK
 
 ## Plan Self-Review
 
-- The design’s Android-free policy, 40 ms boundary, zero-consumption rule, and selection-mode rule are covered by Task 1.
+- The design’s Android-free boundary policy, zero-consumption rule, and selection-mode rule are covered by Task 1.
 - The design’s bounded queue, single consumer, disposal, and retained rotaryScrollableBehavior = null are covered by Task 2.
 - The design’s LONG_PRESS feedback and no-op selection-mode behavior are covered by Task 3.
 - The design’s local gate, dynamic ADB discovery, no-write device boundary, crash audit, evidence labels, and M3 documentation are covered by Task 4.

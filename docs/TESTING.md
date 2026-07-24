@@ -21,12 +21,14 @@ DELETE 经 `FileOperationCoordinator`、Local Binder 和前台 `FileOperationSer
 
 2026-07-24 表冠与触觉兼容增量的本地证据：
 
-- `CrownHapticPolicyTest` 覆盖首次非零滚动、零消费距离、40 ms 节流窗口、边界恢复和选择模式长按策略。
-- `RoundList` 继续保持 `rotaryScrollableBehavior = null`；自定义表冠事件改为有界队列和单消费者，实际消费距离为零时不请求 `CLOCK_TICK`。
+- `CrownHapticPolicyTest` 覆盖正常表冠滚动不触觉、顶部/底部到达各触发一次、离开边界后可再次触发，以及选择模式长按策略。
+- `RoundList` 继续保持 `rotaryScrollableBehavior = null`；自定义表冠事件改为有界队列和单消费者，正常滚动不请求触觉，边界未消费事件最多请求一次 `VIRTUAL_KEY`。
 - 文件卡片非选择模式长按请求一次 `LONG_PRESS`；选择模式不重复请求，触觉失败不阻止选择状态切换。
+- 表冠连续滚动不请求触觉；到达顶部或底部时仅请求一次 `VIRTUAL_KEY` 短反馈，同一边界持续输入不重复请求。
 - 当前设备会话动态发现 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，属性为 `model=M2505W1`、`device=grasslte`；当前 Debug APK 已安装，SHA-256 为 `00BE0ED679BA9886EAD42DC0DB26F590E80CCDD830F3ED3A08B400CA64B8D8EB`。
 - 使用 `input rotaryencoder scroll --axis SCROLL,-100` 和反向 `100` 验证列表从顶部项目滚动到中部项目并返回顶部；快速重复事件后仍能滚动，顶部/底部继续输入没有崩溃或异常状态。
 - 对当前列表文件长按后 UI 显示 `已选 1 项`、`复制`、`移动`、`删除`；选择模式内再次长按同一文件仍显示勾选和单项选择，没有变为 `已选 2 项`。
+- 新 Debug APK 的 Watch 5 边界触觉记录为两次 `Primitive=TICK`，持续 `17–18 ms`：一次到达底部、一次反向到达顶部；同一边界继续输入未增加触觉记录。安装后未出现新的 `TEXTURE_TICK` 长触觉请求。
 - 设备 `vibrator_manager list` 返回 1 个 vibrator；`cmd vibrator_manager feedback 4`（`CLOCK_TICK`）和 `feedback 0`（`LONG_PRESS`）均 exit 0，平台接受两种标准触觉常量。触觉强度属于物理主观感受，本记录不量化强度。
 - 交互期间应用进程仍在前台，`AndroidRuntime` 为空；M1Sandbox 没有新增任务临时残留，现有 `CopyTarget/notes.part` 与 `DeleteFile/notes.part` 为用户既有文件，未被修改。
 

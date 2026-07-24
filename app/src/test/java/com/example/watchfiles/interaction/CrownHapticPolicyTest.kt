@@ -1,44 +1,55 @@
 package com.example.watchfiles.interaction
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CrownHapticPolicyTest {
     @Test
-    fun firstNonZeroScrollAllowsCrownTick() {
-        val policy = CrownHapticPolicy(clockMillis = { 1_000L })
+    fun crownScrollDoesNotEmitContinuousHaptic() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 12f))
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = -12f))
     }
 
     @Test
-    fun zeroConsumedScrollDoesNotAllowCrownTick() {
-        val policy = CrownHapticPolicy(clockMillis = { 1_000L })
+    fun reachingTopEmitsOneBoundaryCue() {
+        val policy = CrownHapticPolicy()
 
-        assertFalse(policy.shouldEmitCrownTick(consumedPixels = 0f))
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f))
     }
 
     @Test
-    fun crownTickIsSuppressedInsideFortyMillisecondWindow() {
-        var now = 1_000L
-        val policy = CrownHapticPolicy(clockMillis = { now })
+    fun reachingBottomEmitsOneBoundaryCue() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
-        now = 1_039L
-
-        assertFalse(policy.shouldEmitCrownTick(consumedPixels = 1f))
+        assertEquals(
+            CrownBoundary.Bottom,
+            policy.boundaryReached(deltaPixels = -12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = 0f))
     }
 
     @Test
-    fun crownTickIsAllowedAtFortyMillisecondBoundary() {
-        var now = 1_000L
-        val policy = CrownHapticPolicy(clockMillis = { now })
+    fun boundaryCueCanEmitAgainAfterLeavingAndReturning() {
+        val policy = CrownHapticPolicy()
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
-        now = 1_040L
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
+        assertNull(policy.boundaryReached(deltaPixels = -12f, consumedPixels = -12f))
 
-        assertTrue(policy.shouldEmitCrownTick(consumedPixels = 1f))
+        assertEquals(
+            CrownBoundary.Top,
+            policy.boundaryReached(deltaPixels = 12f, consumedPixels = 0f),
+        )
     }
 
     @Test
