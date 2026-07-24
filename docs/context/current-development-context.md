@@ -21,13 +21,13 @@ M1Sandbox。2026-07-24 用户确认在线设备 `192.168.31.60:38935`（`model=M
 就是目标 Watch 5；当前 Debug APK 已安装并完成受限真机回归。大任务 COPY/MOVE/DELETE 提醒页、取消语义、
 DELETE 二次确认链，以及普通小 COPY/MOVE/DELETE 不出现新提醒均已通过；文件哈希、临时残留、通知和崩溃审计正常。
 
-本次表冠与触觉增量的设备验收未执行：`adb devices -l` 和 `adb mdns services` 均未发现在线设备，因此 Watch 5
-上的滚动边界、快速旋转和触觉反馈保持 `PENDING_DEVICE_UI`，没有复用历史 serial 或安装本次 APK。
+本次表冠与触觉增量已在动态发现的 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`（`M2505W1` / `grasslte`）上完成受限回归：
+rotary encoder 滚动、反向回滚、边界输入、文件长按进入选择和选择模式重复长按均通过；vibrator manager 返回 1 个 vibrator，
+`CLOCK_TICK`/`LONG_PRESS` 平台探针均 exit 0。进程保持前台，`AndroidRuntime` 为空，M1Sandbox 没有新增任务临时残留。
 
 剩余缺口：任何熄屏继续或 Activity 重入继续执行的产品性宣称、进程终止/恢复、任务持久化、自动重试、性能收尾，
-以及表冠/触觉的厂商真机验收，
 以及为凑阈值而构造的 `100 项`、`50 MiB` 或 `5000 项` 压力测试。
 `START_NOT_STICKY` 是明确设计边界，不代表实现了进程恢复。
 
-下一步继续 M3 的性能收尾，并在 Watch 5 再次在线时完成表冠/触觉只读验收；不扩大到持久化恢复、自动重试或压力测试。历史决策与兼容约束见
+下一步继续 M3 的性能收尾；不扩大到持久化恢复、自动重试或压力测试。历史决策与兼容约束见
 `docs/superpowers/context/PROJECT_CONTEXT.md`。

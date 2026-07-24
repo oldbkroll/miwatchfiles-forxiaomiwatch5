@@ -3,8 +3,7 @@
 日期：2026-07-24
 
 状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；
-表冠事件队列、标准 Android 触觉适配和长按触觉代码已完成本地实现与测试，但本次增量没有发现在线设备，厂商交互真机验收为
-`PENDING_DEVICE_UI`；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
+表冠事件队列、标准 Android 触觉适配和长按触觉代码已完成本地实现、测试及当前 Watch 5 受限回归；启动/内存/目录性能收尾仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，
 以及既有构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
 
 ## 本地 Debug 验证
@@ -41,9 +40,11 @@
 | 触觉策略测试 | PASS；首次非零滚动、零消费距离、40 ms 节流窗口、边界恢复和选择模式长按策略均有 JVM 覆盖。 |
 | 表冠滚动实现 | PASS；`RoundList` 继续使用 `rotaryScrollableBehavior = null`，事件进入容量 32 的有界队列并由单消费者顺序调用 `scrollBy`。 |
 | 触觉映射 | PASS；表冠使用 `CLOCK_TICK`，非选择模式长按使用 `LONG_PRESS`，均通过 `View.performHapticFeedback`，失败静默降级。 |
-| Watch 5 厂商交互 | PENDING_DEVICE_UI；本次 `adb devices -l` 和 `adb mdns services` 均为空，没有安装本次 APK 或复用历史 serial。 |
+| Watch 5 厂商交互 | PASS；动态 serial 为 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`，rotary encoder 滚动、反向回滚、边界输入、长按选择和重复长按均通过。 |
+| Watch 5 触觉平台 | PASS；`vibrator_manager list` 返回 1，`feedback 4`/`feedback 0` 均 exit 0；物理触觉强度未作主观量化。 |
+| Watch 5 崩溃/文件审计 | PASS；进程仍在前台，`AndroidRuntime` 为空，未新增任务临时残留，既有用户 `.part` 文件未修改。 |
 
-本次设备不可用，因此未把快速旋转、列表边界触觉、长按反馈强度或厂商降级行为写成已验收。
+本次回归不把触觉强度或熄屏继续能力写成产品性承诺；未执行文件写操作或压力夹具。
 
 ## 架构与明确边界
 
