@@ -3,11 +3,11 @@
 ## M3：可靠性、后台操作与性能收尾
 
 - [x] 前台文件操作服务（本地 gates 与真机 COPY/MOVE/DELETE 冒烟已通过）
-- [ ] 大任务亮屏风险提示（实现、单元测试和本地 Debug gate 已完成；递归项目数 ≥ 100 或已知总容量 ≥ 52,428,800 bytes〔50 MiB〕时，执行前提示用户尽量保持亮屏。当前构建的真机提示页确认仍为 `PENDING_DEVICE_UI`）
+- [x] 大任务亮屏风险提示（实现、单元测试、本地 Debug gate 和 Watch 5 真机回归已完成；递归项目数 ≥ 100 或已知总容量 ≥ 52,428,800 bytes〔50 MiB〕时，执行前提示用户尽量保持亮屏）
 - [ ] 启动、内存和目录加载性能收尾
 - [ ] 表冠交互和触觉反馈的厂商兼容实现
 
-M3 真机记录见 `docs/context/m3-foreground-file-operation-service-closeout.md`。已有用户确认的真实 Watch 5 证据覆盖普通 COPY/MOVE/DELETE、冲突取消、替换全部和运行中 COPY 取消；2026-07-24 当前构建因在线 ADB transport 无法安全确认为当前 Watch 5，仅完成本地 gate，大任务提示页与本构建 ordinary rerun 仍保持 `PENDING_DEVICE_UI`。
+M3 真机记录见 `docs/context/m3-foreground-file-operation-service-closeout.md`。2026-07-24 用户确认在线 ADB 设备为目标 Watch 5；当前构建已完成大任务 COPY/MOVE/DELETE 提醒、取消/返回、DELETE 二次确认链和普通小任务 no-warning 回归。真机写入仍限于 M1Sandbox。
 
 ### M3 当前边界调整
 

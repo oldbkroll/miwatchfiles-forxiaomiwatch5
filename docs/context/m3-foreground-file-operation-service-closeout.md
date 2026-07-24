@@ -2,7 +2,7 @@
 
 日期：2026-07-24
 
-状态：大任务亮屏风险提示的代码、Runner/路由 gate 和本地 Debug gate 已完成；真实 Watch 5 的既有 M3 证据已覆盖普通 COPY/MOVE/DELETE、冲突取消、替换全部和运行中 COPY 取消。2026-07-24 当前在线 ADB 仅发现 `192.168.31.60:38935`（`M2505W1` / `grasslte`），无法安全确认就是当前 Xiaomi Watch 5，因此本构建未安装、未做真机回归；大任务提醒页和当前构建 ordinary rerun 均保持 `PENDING_DEVICE_UI`。
+状态：大任务亮屏风险提示的代码、Runner/路由 gate、本地 Debug gate 和当前 Debug APK 的受限 Watch 5 真机回归均已完成；性能收尾和厂商交互仍未完成。真实设备上的普通 COPY/MOVE/DELETE、冲突取消、替换全部、运行中 COPY 取消，以及当前构建的大任务提醒页和普通小任务 no-warning 路径均已有证据。
 
 ## 本地 Debug 验证
 
@@ -37,6 +37,20 @@
 - 大任务提醒只是执行前 gate，不改变既有单任务互斥、前台 Service 生命周期、删除二次确认或 `SafeTextWriteRepository` 的文本安全写入边界。
 - 当前 closeout 以源码、单元测试和既有真机记录为准；没有把未执行的提示页 UI、熄屏继续或压力边界写成通过。
 
+## 2026-07-24 当前 Debug APK 真机回归
+
+| 场景 | 证据状态 | 实际结果 |
+|---|---|---|
+| 设备与 APK | PASS | 用户确认 `192.168.31.60:38935`（`M2505W1` / `grasslte`）为目标 Watch 5；当前 Debug APK 安装成功，SHA-256 为 `03AF5DBCFDE3…C87FC6C1`。 |
+| COPY 大任务提醒 | PASS | 既有 256.0 MiB fixture 递归扫描显示 `2 项 / 256.0 MiB`；提醒文案正确，取消和系统返回均回到选择页，无终态结果或文件变更。 |
+| MOVE 大任务提醒 | PASS | 提醒文案正确；取消回到选择页，无文件变更。 |
+| DELETE 大任务提醒 | PASS | 提醒确认后进入既有“确认永久删除”页；随后取消，无文件变更。 |
+| 普通小 COPY/MOVE/DELETE | PASS | 29 B 小文件分别进入既有冲突页、既有冲突页和既有永久删除确认页，均未显示新提醒；后续均取消。 |
+| 文件与运行时审计 | PASS | M3 与小任务源/目标哈希不变；无新临时残留、应用通知记录或 `AndroidRuntime` 错误，Activity 仍在前台。 |
+
+本次大任务 fixture 为既有 `M3RunningCancel20260721/src/large.bin`，没有为凑阈值创建 `100 项`、`50 MiB` 或
+`5000 项`压力夹具。所有真实写入仍限定在 `M1Sandbox`。
+
 ## 已有真实 Watch 5 证据
 
 | 场景 | 证据状态 | 说明 |
@@ -54,19 +68,18 @@
 | `adb devices -l` 在线 transport | `192.168.31.60:38935` |
 | Model | `M2505W1` |
 | Device | `grasslte` |
-| 设备结论 | `PENDING_DEVICE_UI` |
-| 原因 | 该 transport 不能安全确认就是当前 Xiaomi Watch 5，因此未执行 `adb install`、未执行真机回归，也不宣称大任务提醒页或当前构建 ordinary no-warning 路径已验证。 |
+| 设备结论 | `PASS` |
+| 原因 | 用户确认该 transport 就是目标 Xiaomi Watch 5；当前 APK 已安装，且大任务提醒页、取消/返回、DELETE 二次确认链和 ordinary no-warning 路径均有 UI、文件系统及运行时审计证据。 |
 
-## 剩余设备验收项（PENDING_DEVICE_UI）
+## 明确未验收的产品边界
 
-1. 在安全确认的 Watch 5 上，为当前 APK 验收大任务提醒页本身，包括达到阈值后的提示展示、继续操作和取消返回。
-2. 为当前 APK 重新确认 ordinary 小任务路径不会误触发大任务提醒。
-3. 如需产品级宣称，再单独记录任何熄屏继续、Activity 重入后的继续执行或长任务中断边界；当前 closeout 不把这些写成已完成。
-4. 如需额外性能/压力结论，再单独设计并执行受控夹具；当前 closeout 不包含 `100 项`、`50 MiB` 或 `5000 项` 真机压力测试。
+1. 不宣称熄屏后继续执行、Activity 重入后的继续执行或长任务不中断。
+2. 不宣称进程终止/恢复、任务持久化或自动重试。
+3. 不包含 `100 项`、`50 MiB` 或 `5000 项` 真机压力测试；当前 fixture 只用于验证已知大小阈值提示。
 
 ## Concerns
 
 - 本地 Lint 没有 error，但保留 2 条既有 `ApplySharedPref` warning；本任务按范围不修改 `TextTransactionJournal.kt`。
-- 当前在线 ADB transport 的型号字段仍是 `M2505W1` / `grasslte`，但这不足以安全确认它就是当前应验收的 Xiaomi Watch 5；因此必须把本构建设备结论保持为 `PENDING_DEVICE_UI`。
-- 真实 Watch 5 的既有普通操作/冲突/取消证据可以用来清理文档里的过期 pending 项，但不能替代当前 APK 的大任务提醒页 UI 证据。
+- 当前在线 ADB transport 的型号字段为 `M2505W1` / `grasslte`，并已由用户确认就是当前应验收的 Xiaomi Watch 5；本构建设备结论因此为 `PASS`。
+- 本次当前 APK 真机回归已取得大任务提醒页和 ordinary no-warning 的 UI、文件系统及运行时证据。
 - 不得把进程恢复、持久化、自动重试、熄屏继续或大规模压力测试写成 M3 已验证能力。

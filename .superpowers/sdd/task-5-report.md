@@ -1,5 +1,7 @@
 # Task 5 Report — Documentation and Evidence Sync for the M3 Large Operation Warning
 
+> The sections below through “Remaining `PENDING_DEVICE_UI`” preserve the documentation-sync snapshot taken before the later user-approved device validation. The follow-up section at the end is the current device result and supersedes that pending snapshot.
+
 ## Scope
 
 - Modified `docs/TESTING.md`
@@ -88,10 +90,25 @@ These are now reflected as historical completed evidence rather than left as sta
 - Replaced the stale `172 tests` and old APK hash with the current `173 tests` gate, SHA-256, and APK timestamp.
 - Kept the no-source-change, no-device-action, and `PENDING_DEVICE_UI` constraints intact.
 
-## Remaining `PENDING_DEVICE_UI`
+## Remaining `PENDING_DEVICE_UI` in the original documentation-sync snapshot
 
 - Verify the dedicated large-operation warning page on a safely identified Xiaomi Watch 5 for the current APK.
 - Re-run the ordinary small-task no-warning path on that same safely identified device for the current APK.
+
+The two items above described the state before the later user-approved device-validation follow-up. They are superseded by the evidence below.
+
+## Follow-up real-device verification — 2026-07-24
+
+The user confirmed that the only online transport, `192.168.31.60:38935` (`M2505W1` / `grasslte`), is the target Xiaomi Watch 5. The current Debug APK (`03AF5DBCFDE3F3B89555210D9FC6661DCEBFDADBDB7BFE2BE7718E29C87FC6C1`) was installed successfully.
+
+- Existing `M3RunningCancel20260721/src/large.bin` triggered the known-size warning with `2 items / 256.0 MiB`; no threshold fixture was created.
+- COPY warning display, cancel, and System Back: PASS; returned to selection without a terminal result or file mutation.
+- MOVE warning display and cancel: PASS; returned to selection without file mutation.
+- DELETE warning, continue, existing permanent-delete confirmation, and cancel: PASS; no file mutation.
+- Existing 29 B `known.txt` small COPY and MOVE went directly to the existing conflict page; small DELETE went directly to the existing permanent-delete confirmation page. No new warning appeared; all follow-up actions were cancelled.
+- M1Sandbox fixture hashes remained unchanged. No new `.part-dir`, `.backup`, or `.watchfiles*` residue, app notification record, or `AndroidRuntime` error was found; the Activity remained resumed.
+
+This follow-up completes current-build device evidence for the M3 warning feature. It does not claim screen-off continuation, process recovery, persistence, automatic retry, or `100-item`/`50 MiB`/`5000-item` stress testing.
 
 ## Explicit non-goals / not completed
 
