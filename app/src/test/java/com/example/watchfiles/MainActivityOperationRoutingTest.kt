@@ -42,6 +42,28 @@ class MainActivityOperationRoutingTest {
     }
 
     @Test
+    fun extractsOnlyLargeOperationConfirmationStateForDedicatedScreen() {
+        val warningState = FileOperationState.WaitingForLargeOperationConfirmation(
+            FileOperationType.COPY,
+            100,
+            null,
+        )
+        val otherStates = listOf(
+            FileOperationState.Idle,
+            FileOperationState.Scanning(FileOperationType.COPY),
+            FileOperationState.WaitingForDeleteConfirmation(
+                DeletePreview(topLevelCount = 1, itemCount = 2, totalBytes = 8),
+            ),
+            FileOperationState.Failed(FileOperationType.DELETE, result),
+        )
+
+        assertEquals(warningState, largeOperationConfirmationStateOrNull(warningState))
+        otherStates.forEach { state ->
+            assertNull(largeOperationConfirmationStateOrNull(state))
+        }
+    }
+
+    @Test
     fun routesActiveOperationStatesToFileOperationScreen() {
         val conflict = FileConflict(Paths.get("/source.txt"), Paths.get("/target.txt"))
         val states = listOf(

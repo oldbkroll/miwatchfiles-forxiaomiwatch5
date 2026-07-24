@@ -96,25 +96,20 @@ internal fun FileOperationScreen(
 
 @Composable
 internal fun LargeOperationConfirmationScreen(
-    state: FileOperationState,
+    state: FileOperationState.WaitingForLargeOperationConfirmation,
     onContinue: () -> Unit,
     onCancel: () -> Unit,
 ) {
     RoundList {
-        when (state) {
-            is FileOperationState.WaitingForLargeOperationConfirmation -> {
-                item { ListHeader { Text(LARGE_OPERATION_WARNING_TITLE) } }
-                item {
-                    Text(
-                        text = formatLargeOperationScale(state.itemCount, state.totalBytes, ::formatBytes),
-                    )
-                }
-                item { Text(LARGE_OPERATION_WARNING_MESSAGE) }
-                item { AppChip("继续操作", "确认后继续当前任务", onClick = onContinue) }
-                item { AppChip("取消", "返回原目录", onClick = onCancel) }
-            }
-            else -> item { Text("大任务提醒不可用") }
+        item { ListHeader { Text(LARGE_OPERATION_WARNING_TITLE) } }
+        item {
+            Text(
+                text = formatLargeOperationScale(state.itemCount, state.totalBytes, ::formatBytes),
+            )
         }
+        item { Text(LARGE_OPERATION_WARNING_MESSAGE) }
+        item { AppChip("继续操作", "确认后继续当前任务", onClick = onContinue) }
+        item { AppChip("取消", "返回原目录", onClick = onCancel) }
     }
 }
 

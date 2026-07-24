@@ -147,6 +147,11 @@ internal fun shouldCancelAndReturnToBrowserFromFileOperationBack(
     state: FileOperationState,
 ): Boolean = state is FileOperationState.WaitingForLargeOperationConfirmation
 
+internal fun largeOperationConfirmationStateOrNull(
+    state: FileOperationState,
+): FileOperationState.WaitingForLargeOperationConfirmation? =
+    state as? FileOperationState.WaitingForLargeOperationConfirmation
+
 private sealed interface NameEditorRequest {
     data object CreateDirectory : NameEditorRequest
     data class Rename(val entry: FileEntry) : NameEditorRequest
@@ -546,14 +551,18 @@ private fun WatchFilesApp(
             },
             onCancel = { screen = AppScreen.BROWSER },
         )
-        AppScreen.LARGE_OPERATION_CONFIRMATION -> LargeOperationConfirmationScreen(
-            state = operationState,
-            onContinue = fileOperationCoordinator::confirmLargeOperation,
-            onCancel = {
-                fileOperationCoordinator.cancel()
-                screen = AppScreen.BROWSER
-            },
-        )
+        AppScreen.LARGE_OPERATION_CONFIRMATION -> {
+            largeOperationConfirmationStateOrNull(operationState)?.let { largeOperationState ->
+                LargeOperationConfirmationScreen(
+                    state = largeOperationState,
+                    onContinue = fileOperationCoordinator::confirmLargeOperation,
+                    onCancel = {
+                        fileOperationCoordinator.cancel()
+                        screen = AppScreen.BROWSER
+                    },
+                )
+            }
+        }
         AppScreen.DELETE_CONFIRMATION -> DeleteConfirmationScreen(
             state = operationState,
             onConfirm = {
