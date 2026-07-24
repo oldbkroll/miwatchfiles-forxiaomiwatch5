@@ -114,6 +114,7 @@ interface FileOperationServicePort {
 
     fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean
     fun prepareDelete(sources: List<Path>): Boolean
+    fun confirmLargeOperation(): Boolean
     fun confirmDelete(): Boolean
     fun replaceAll()
     fun cancel()
@@ -140,6 +141,9 @@ class FileOperationServicePortAdapter(
             beforeTaskAccepted(FileOperationType.DELETE)
             runner.prepareDelete(sources)
         }
+
+    override fun confirmLargeOperation(): Boolean =
+        synchronized(commandLock) { runner.confirmLargeOperation() }
 
     override fun confirmDelete(): Boolean = synchronized(commandLock) { runner.confirmDelete() }
 
@@ -206,6 +210,8 @@ class FileOperationService : Service(), FileOperationServicePort {
         adapter.prepareDelete(sources).also { accepted ->
             if (!accepted && state.value == FileOperationState.Idle) stopForegroundIfStarted()
         }
+
+    override fun confirmLargeOperation(): Boolean = adapter.confirmLargeOperation()
 
     override fun confirmDelete(): Boolean = adapter.confirmDelete()
 

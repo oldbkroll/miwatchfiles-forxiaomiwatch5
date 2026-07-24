@@ -23,6 +23,8 @@ class FileOperationCoordinator(
 
     fun prepareDelete(sources: List<Path>): Boolean = gateway.prepareDelete(sources)
 
+    fun confirmLargeOperation(): Boolean = gateway.confirmLargeOperation()
+
     fun confirmDelete(): Boolean = gateway.confirmDelete()
 
     fun replaceAll() = gateway.replaceAll()

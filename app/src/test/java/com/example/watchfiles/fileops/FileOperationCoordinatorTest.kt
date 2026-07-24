@@ -43,14 +43,19 @@ class FileOperationCoordinatorTest {
     }
 
     @Test fun forwardsEveryControlCommand() {
-        val gateway = RecordingGateway(confirmDeleteResult = true)
+        val gateway = RecordingGateway(
+            confirmLargeOperationResult = true,
+            confirmDeleteResult = true,
+        )
         val coordinator = FileOperationCoordinator(gateway)
 
+        assertTrue(coordinator.confirmLargeOperation())
         assertTrue(coordinator.confirmDelete())
         coordinator.replaceAll()
         coordinator.cancel()
         coordinator.consumeResult()
 
+        assertEquals(1, gateway.confirmLargeOperationCalls)
         assertEquals(1, gateway.confirmDeleteCalls)
         assertEquals(1, gateway.replaceAllCalls)
         assertEquals(1, gateway.cancelCalls)
@@ -86,6 +91,7 @@ class FileOperationCoordinatorTest {
         initialState: FileOperationState = FileOperationState.Idle,
         private val startResult: Boolean = false,
         private val prepareDeleteResult: Boolean = false,
+        private val confirmLargeOperationResult: Boolean = false,
         private val confirmDeleteResult: Boolean = false,
     ) : FileOperationServiceGateway {
         override val state: StateFlow<FileOperationState> = MutableStateFlow(initialState)
@@ -93,6 +99,7 @@ class FileOperationCoordinatorTest {
         var disconnectCalls = 0
         var startCall: StartCall? = null
         var prepareDeleteSources: List<Path>? = null
+        var confirmLargeOperationCalls = 0
         var confirmDeleteCalls = 0
         var replaceAllCalls = 0
         var cancelCalls = 0
@@ -118,6 +125,11 @@ class FileOperationCoordinatorTest {
         override fun prepareDelete(sources: List<Path>): Boolean {
             prepareDeleteSources = sources
             return prepareDeleteResult
+        }
+
+        override fun confirmLargeOperation(): Boolean {
+            confirmLargeOperationCalls += 1
+            return confirmLargeOperationResult
         }
 
         override fun confirmDelete(): Boolean {

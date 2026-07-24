@@ -52,6 +52,24 @@ class FileOperationServiceTest {
         assertFalse(content.hasVibration)
     }
 
+    @Test fun waitingForLargeOperationConfirmationNotificationIsLowNoise() {
+        val content = notificationContentFor(
+            FileOperationState.WaitingForLargeOperationConfirmation(
+                type = FileOperationType.MOVE,
+                itemCount = 10,
+                totalBytes = 1024,
+            ),
+        )!!
+
+        assertEquals("WatchFiles 正在操作", content.title)
+        assertTrue(content.text.contains("移动"))
+        assertTrue(content.text.contains("等待确认"))
+        assertEquals(null, content.processedItems)
+        assertEquals(null, content.totalItems)
+        assertFalse(content.hasSound)
+        assertFalse(content.hasVibration)
+    }
+
     @Test fun servicePortAdapterForwardsEveryRunnerCommand() {
         val runner = RecordingRunnerPort()
         val adapter = FileOperationServicePortAdapter(runner)
@@ -59,6 +77,7 @@ class FileOperationServiceTest {
         assertSame(runner.state, adapter.state)
         assertTrue(adapter.start(FileOperationType.COPY, listOf(source), target))
         assertTrue(adapter.prepareDelete(listOf(source)))
+        assertTrue(adapter.confirmLargeOperation())
         assertTrue(adapter.confirmDelete())
         adapter.replaceAll()
         adapter.cancel()
@@ -68,6 +87,7 @@ class FileOperationServiceTest {
         assertEquals(listOf(source), runner.startedSources)
         assertEquals(target, runner.startedTarget)
         assertEquals(listOf(source), runner.deleteSources)
+        assertEquals(1, runner.confirmLargeOperationCalls)
         assertEquals(1, runner.confirmDeleteCalls)
         assertEquals(1, runner.replaceAllCalls)
         assertEquals(1, runner.cancelCalls)
@@ -229,6 +249,7 @@ class FileOperationServiceTest {
         var startedSources: List<java.nio.file.Path>? = null
         var startedTarget: java.nio.file.Path? = null
         var deleteSources: List<java.nio.file.Path>? = null
+        var confirmLargeOperationCalls = 0
         var confirmDeleteCalls = 0
         var replaceAllCalls = 0
         var cancelCalls = 0
@@ -249,6 +270,11 @@ class FileOperationServiceTest {
 
         override fun prepareDelete(sources: List<java.nio.file.Path>): Boolean {
             deleteSources = sources
+            return true
+        }
+
+        override fun confirmLargeOperation(): Boolean {
+            confirmLargeOperationCalls += 1
             return true
         }
 

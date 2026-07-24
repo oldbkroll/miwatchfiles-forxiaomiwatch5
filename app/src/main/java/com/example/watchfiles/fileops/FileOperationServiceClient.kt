@@ -22,6 +22,7 @@ interface FileOperationServiceGateway {
     fun disconnect()
     fun start(type: FileOperationType, sources: List<Path>, targetDirectory: Path): Boolean
     fun prepareDelete(sources: List<Path>): Boolean
+    fun confirmLargeOperation(): Boolean
     fun confirmDelete(): Boolean
     fun replaceAll()
     fun cancel()
@@ -165,6 +166,8 @@ class FileOperationServiceClient internal constructor(
     override fun prepareDelete(sources: List<Path>): Boolean = submit(
         command = StartCommand.Delete(sources),
     )
+
+    override fun confirmLargeOperation(): Boolean = currentPort()?.confirmLargeOperation() ?: false
 
     override fun confirmDelete(): Boolean = currentPort()?.confirmDelete() ?: false
 

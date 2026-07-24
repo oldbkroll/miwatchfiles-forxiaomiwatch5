@@ -41,6 +41,7 @@ class FileOperationServiceClientTest {
         val port = RecordingServicePort(
             startResult = true,
             prepareDeleteResult = false,
+            confirmLargeOperationResult = true,
             confirmDeleteResult = true,
         )
         val binding = FakeBindingAdapter()
@@ -50,6 +51,7 @@ class FileOperationServiceClientTest {
 
         assertTrue(client.start(FileOperationType.MOVE, listOf(source), target))
         assertFalse(client.prepareDelete(listOf(source)))
+        assertTrue(client.confirmLargeOperation())
         assertTrue(client.confirmDelete())
         client.replaceAll()
         client.cancel()
@@ -57,6 +59,7 @@ class FileOperationServiceClientTest {
 
         assertEquals(StartCall(FileOperationType.MOVE, listOf(source), target), port.startCall)
         assertEquals(listOf(source), port.prepareDeleteSources)
+        assertEquals(1, port.confirmLargeOperationCalls)
         assertEquals(1, port.confirmDeleteCalls)
         assertEquals(1, port.replaceAllCalls)
         assertEquals(1, port.cancelCalls)
@@ -291,6 +294,7 @@ class FileOperationServiceClientTest {
         initialState: FileOperationState = FileOperationState.Idle,
         private val startResult: Boolean = false,
         private val prepareDeleteResult: Boolean = false,
+        private val confirmLargeOperationResult: Boolean = false,
         private val confirmDeleteResult: Boolean = false,
         private val events: MutableList<String> = mutableListOf(),
         private val dispatchStarted: CountDownLatch? = null,
@@ -302,6 +306,7 @@ class FileOperationServiceClientTest {
         var startCalls = 0
         var prepareDeleteCalls = 0
         var prepareDeleteSources: List<Path>? = null
+        var confirmLargeOperationCalls = 0
         var confirmDeleteCalls = 0
         var replaceAllCalls = 0
         var cancelCalls = 0
@@ -324,6 +329,11 @@ class FileOperationServiceClientTest {
             prepareDeleteCalls += 1
             prepareDeleteSources = sources
             return prepareDeleteResult
+        }
+
+        override fun confirmLargeOperation(): Boolean {
+            confirmLargeOperationCalls += 1
+            return confirmLargeOperationResult
         }
 
         override fun confirmDelete(): Boolean {
