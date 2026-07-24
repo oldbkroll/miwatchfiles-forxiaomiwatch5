@@ -2,9 +2,7 @@
 
 WatchFiles 是一个面向 480×480 圆屏 Android 手表的轻量文件管理器，当前主要针对小米 Watch 5 的低内存、32 位和旧式存储权限环境开发。
 
-当前 M0–M3 已完成；2026-07-24 已将 M3 里程碑收口并合并到 `main`。正式版本 `0.3.1`
-已完成签名构建并上传为 GitHub Draft Release，Release 仍保持草稿，待后续确认后再公开发布。
-M4 暂不开始。
+正式版本 `0.3.1` 已完成签名构建并上传为 GitHub Draft Release，Release 仍保持草稿，待后续确认后再公开发布。
 
 ## 已实现功能
 
@@ -110,11 +108,9 @@ adb -s <serial> shell pm install -r /data/local/tmp/watchfiles-debug.apk
 
 不要在 system、media、个人目录或该沙箱之外进行写入测试。
 
-## 开发里程碑
+## 项目文件说明
 
-- M3：已完成前台文件操作、取消与风险提示、表冠/触觉兼容、Watch 5 真机回归，以及启动、内存和目录加载性能收尾。
-- M4：暂缓；视频播放、ZIP 查看和 ZIP 解压仍作为后续可选能力。
-- `docs/superpowers/` 和 `.superpowers/`：仅保留在本地作为开发工作流记录，不参与 GitHub 同步。
+`docs/superpowers/` 和 `.superpowers/` 仅保留在本地作为开发工作流记录，不参与 GitHub 同步。
 
 ## 当前限制与后续方向
 
@@ -122,8 +118,8 @@ adb -s <serial> shell pm install -r /data/local/tmp/watchfiles-debug.apk
 - ZIP 查看、ZIP 解压和视频播放属于后续可选评估
 - 暂不提供收藏、最近目录、文件系统搜索、用户自定义排序或独立属性页
 - 暂不提供 APK 安装、局域网/WebDAV、Shizuku 或 root 后端
-- M3 已完成当前范围内的开发与验证；不承诺进程终止恢复、任务持久化、自动重试、熄屏继续或为凑阈值构造的压力测试
-- M4 后续再评估内置视频播放、ZIP 查看和 ZIP 解压
+- 不承诺进程终止恢复、任务持久化、自动重试、熄屏继续或为凑阈值构造的压力测试
+- 内置视频播放、ZIP 查看和 ZIP 解压属于后续可选评估
 
 ## License
 
