@@ -1,63 +1,99 @@
-# Task 4 Report — Round-Screen DELETE Confirmation UI
+# Task 4 Report — Large Operation Warning Route and Round-Screen UI
 
-## Changed Files
+## Scope
 
-- `app/src/main/java/com/example/watchfiles/MainActivity.kt`
-  - Added the `DELETE_CONFIRMATION` route, selection-mode DELETE action, coordinator prepare/confirm/cancel wiring, Back handling, and terminal refresh/consume/selection-clear return flow.
-  - DELETE is offered only while browser selection mode is active. Cancelling confirmation returns to the browser without clearing that selection.
-- `app/src/main/java/com/example/watchfiles/FileOperationScreens.kt`
-  - Added `DeleteConfirmationScreen` using the existing `RoundList` and `AppChip` helpers.
-  - It renders cancellation during scanning, irreversible-delete details only while awaiting confirmation, and the existing terminal result layout for pre-scan failures. `Failed`, `Cancelled`, and `Idle` do not expose a destructive action.
+- Modified `app/src/main/java/com/example/watchfiles/MainActivity.kt`
+- Modified `app/src/main/java/com/example/watchfiles/FileOperationScreens.kt`
+- Modified `app/src/test/java/com/example/watchfiles/MainActivityOperationRoutingTest.kt`
 
-No Task 1–3 source or test files were changed.
+No Service, Client, Coordinator, fileops logic, or docs files were changed for this task.
 
-## Verification
+## RED
+
+Added a routing test for `WaitingForLargeOperationConfirmation(FileOperationType.COPY, 100, null)` and asserted `AppScreen.LARGE_OPERATION_CONFIRMATION`.
+
+Command:
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --no-daemon --console=plain
 ```
 
-Result: `BUILD SUCCESSFUL` (34 s; 24 actionable tasks, 5 executed).
+Result:
+
+- `BUILD FAILED`
+- Failure occurred in `:app:compileDebugUnitTestKotlin`
+- Expected compile-time RED: `Unresolved reference 'LARGE_OPERATION_CONFIRMATION'`
+
+Relevant compiler line:
+
+```text
+e: file:///C:/Users/13073/Downloads/miwatchfiles-forxiaomiwatch5/app/src/test/java/com/example/watchfiles/MainActivityOperationRoutingTest.kt:41:32 Unresolved reference 'LARGE_OPERATION_CONFIRMATION'.
+```
+
+This confirmed the test was exercising the missing route rather than passing against the Task 2 placeholder behavior.
+
+## GREEN
+
+Implemented the smallest UI-only change set:
+
+- Added `AppScreen.LARGE_OPERATION_CONFIRMATION`
+- Routed `WaitingForLargeOperationConfirmation` to the dedicated screen
+- Added `LargeOperationConfirmationScreen(state, onContinue, onCancel)`
+- Kept confirmation state routing driven by `LaunchedEffect(operationState)`
+- Wired Continue to `fileOperationCoordinator.confirmLargeOperation()` only
+- Wired Cancel and system Back to `fileOperationCoordinator.cancel()` plus navigation to `BROWSER`
+- Preserved existing FILE_OPERATION / DELETE_CONFIRMATION / conflict / terminal flows
+
+Focused routing verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --no-daemon --console=plain
+```
+
+Result:
+
+- `BUILD SUCCESSFUL`
+- `24 actionable tasks: 5 executed, 19 up-to-date`
+
+Required regression verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --tests "com.example.watchfiles.fileops.LargeOperationWarningTest" --tests "com.example.watchfiles.fileops.FileOperationRunnerTest" --no-daemon --console=plain
+```
+
+Result:
+
+- `BUILD SUCCESSFUL`
+- `24 actionable tasks: 1 executed, 23 up-to-date`
+
+Required build verification:
 
 ```powershell
 .\gradlew.bat :app:assembleDebug --no-daemon --console=plain
 ```
 
-Result: `BUILD SUCCESSFUL` (20 s; 38 actionable tasks, 3 executed).
+Result:
 
-There was no existing Compose UI test harness for this screen, and Task 4 limits product changes to the two Kotlin files; no test file was added. The Debug unit suite and Kotlin compilation exercised the changed production sources.
+- `BUILD SUCCESSFUL`
+- `38 actionable tasks: 4 executed, 34 up-to-date`
 
-## Platform and Safety Notes
+## Self-review
 
-- Both Gradle commands emitted the pre-existing Android SDK XML compatibility warning: the installed command-line tooling understands SDK XML through version 3 while it encountered version 4. It did not fail either build.
-- Confirmed unchanged: `targetSdk = 29`, `android:requestLegacyExternalStorage="true"`, sole `armeabi-v7a` ABI, and the custom crown path with `rotaryScrollableBehavior = null` plus `onRotaryScrollEvent`.
-- Debug-only verification was used. No Release build, lint/release artifact update, ADB command, device connection, installation, or real-device filesystem operation was performed.
-- Task 5 was not started.
+Checked the final diff against the brief:
 
-## Independent Review Follow-up
+- The warning state no longer reuses the temporary `FILE_OPERATION` placeholder route.
+- The dedicated warning page uses existing `RoundList`, `ListHeader`, `Text`, `AppChip`, and `formatBytes`-based `formatLargeOperationScale(...)`.
+- Existing operation, replacement, delete-confirmation, and terminal layouts were left unchanged.
+- Continue does not navigate directly; it only sends the confirmation callback and lets state routing advance.
+- Cancel and Back do not call `finishPendingOperation()`.
+- The existing temporary FILE_OPERATION Back helper remains unchanged for nearby states.
 
-Two Important lifecycle findings were corrected without expanding Task 4 scope:
+## Notes
 
-- The confirmation action now changes to `AppScreen.FILE_OPERATION` only when `confirmDelete()` returns `true`, so DELETE progress, cancellation, terminal display, and result consumption reuse `FileOperationScreen`.
-- `finishPendingOperation` centralizes refresh, terminal-result consumption, pending-source clearing, and browser navigation. DELETE-confirmation Back now cancels and leaves only while scanning or awaiting confirmation; it finishes terminal states, routes active/racing states to `FILE_OPERATION`, and safely returns for `Idle`.
+All Gradle commands emitted the same pre-existing non-fatal Android SDK XML warning:
 
-Because the project has no Compose UI test harness and this task permits no test-file changes, a focused source regression check was used as the test-first substitute:
-
-1. Before the fix it failed as expected, reporting that the confirmation result was discarded and DELETE Back unconditionally left the route.
-2. After the fix it passed with `SOURCE_REGRESSION_CHECK=PASS`, requiring conditional `confirmDelete()` routing plus state-aware Back handling for scanning, confirmation, terminal, active, and idle states.
-
-The first post-fix unit-test run surfaced Kotlin's required exhaustive `when` branch for `WaitingForReplacement`; it is now handled as an active state and routes to `FILE_OPERATION` rather than hiding a task.
-
-```powershell
-.\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain
+```text
+Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered.
 ```
 
-Result: `BUILD SUCCESSFUL` (38 s; 24 actionable tasks, 5 executed).
-
-```powershell
-.\gradlew.bat :app:assembleDebug --no-daemon --console=plain
-```
-
-Result: `BUILD SUCCESSFUL` (19 s; 38 actionable tasks, 3 executed).
-
-Both commands retained the same non-fatal Android SDK XML version warning. No Release, ADB, or real-device filesystem operation was performed.
+It did not block tests or `assembleDebug`.
