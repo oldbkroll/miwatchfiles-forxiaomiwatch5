@@ -108,10 +108,6 @@ adb -s <serial> shell pm install -r /data/local/tmp/watchfiles-debug.apk
 
 不要在 system、media、个人目录或该沙箱之外进行写入测试。
 
-## 项目文件说明
-
-`docs/superpowers/` 和 `.superpowers/` 仅保留在本地作为开发工作流记录，不参与 GitHub 同步。
-
 ## 当前限制与后续方向
 
 - 不内置音频播放器，音频和视频继续交给系统或其他应用打开
