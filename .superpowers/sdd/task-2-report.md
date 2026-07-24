@@ -115,6 +115,92 @@ This confirmed the new Runner tests plus the existing Scanner, Engine, conflict,
 - `FileOperationScreens.kt` contains only a temporary placeholder branch for `WaitingForLargeOperationConfirmation`; Task 4 still owns the final dedicated warning UI/navigation behavior.
 - Both successful Gradle runs emitted the pre-existing SDK XML version warning, but no compilation or test blockers remained.
 
+## Reviewer follow-up: temporary warning Back behavior
+
+### Requirement addressed
+
+The reviewer correctly identified that the temporary `WaitingForLargeOperationConfirmation` compatibility route uses `AppScreen.FILE_OPERATION`, but the shared FILE_OPERATION Back branch still did nothing. That violated the approved cancellation semantics for the temporary warning route.
+
+### Root cause
+
+- `operationScreenForState()` intentionally routes `WaitingForLargeOperationConfirmation` to `FILE_OPERATION` as a temporary compatibility path.
+- `BackHandler` handled `DELETE_CONFIRMATION` specially, but `AppScreen.FILE_OPERATION` still used `Unit`.
+- As a result, system Back on the temporary warning state did not call `fileOperationCoordinator.cancel()` and did not navigate to `BROWSER`.
+
+### Fix implemented
+
+- Added `shouldCancelAndReturnToBrowserFromFileOperationBack(state)` in `MainActivity.kt`.
+- The helper returns `true` only for `FileOperationState.WaitingForLargeOperationConfirmation`.
+- Updated the `AppScreen.FILE_OPERATION` Back branch to:
+  - call `fileOperationCoordinator.cancel()`
+  - set `screen = AppScreen.BROWSER`
+  - only when that helper returns `true`
+- Added a focused regression test in `MainActivityOperationRoutingTest.kt` covering:
+  - the temporary large-operation warning states do cancel-and-return
+  - nearby operation states still do not take that special Back path
+
+### RED
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --no-daemon --console=plain
+```
+
+Observed result: `:app:compileDebugUnitTestKotlin FAILED` because the new regression test referenced a not-yet-existing helper.
+
+Representative compiler output:
+
+```text
+e: MainActivityOperationRoutingTest.kt:83:32 Unresolved reference 'shouldCancelAndReturnToBrowserFromFileOperationBack'.
+e: MainActivityOperationRoutingTest.kt:86:33 Unresolved reference 'shouldCancelAndReturnToBrowserFromFileOperationBack'.
+```
+
+Exit code: 1.
+
+### GREEN: focused MainActivity routing test
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.MainActivityOperationRoutingTest" --no-daemon --console=plain
+```
+
+Observed result:
+
+```text
+> Task :app:testDebugUnitTest FROM-CACHE
+BUILD SUCCESSFUL in 12s
+24 actionable tasks: 1 from cache, 23 up-to-date
+```
+
+Exit code: 0.
+
+### GREEN: covering Runner regression suite
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "com.example.watchfiles.fileops.FileOperationRunnerTest" --no-daemon --console=plain
+```
+
+Observed result:
+
+```text
+> Task :app:testDebugUnitTest FROM-CACHE
+BUILD SUCCESSFUL in 12s
+24 actionable tasks: 1 from cache, 23 up-to-date
+```
+
+Exit code: 0.
+
+### Follow-up scope
+
+This follow-up changed only:
+
+- `app/src/main/java/com/example/watchfiles/MainActivity.kt`
+- `app/src/test/java/com/example/watchfiles/MainActivityOperationRoutingTest.kt`
+
 ## 2026-07-24 reviewer fix: System Back from temporary large-operation warning route
 
 ### Finding addressed
