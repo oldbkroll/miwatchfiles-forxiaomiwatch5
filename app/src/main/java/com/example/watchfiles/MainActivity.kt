@@ -109,6 +109,7 @@ import com.example.watchfiles.image.decodeLowMemoryImage
 import com.example.watchfiles.interaction.CrownHapticPolicy
 import com.example.watchfiles.interaction.HapticCue
 import com.example.watchfiles.interaction.performWatchHaptic
+import com.example.watchfiles.interaction.shouldEmitLongPressHaptic
 import com.example.watchfiles.text.TextDocumentMode
 import com.example.watchfiles.text.TextDocumentScreen
 import com.example.watchfiles.text.TextDocumentViewModel
@@ -803,6 +804,7 @@ private fun FileChip(
     onBeginSelection: (Path) -> Unit,
     onToggleSelection: (Path) -> Unit,
 ) {
+    val view = LocalView.current
     val details = when {
         entry.isDirectory && !entry.isReadable -> "文件夹 · 不可读取"
         entry.isDirectory -> "文件夹"
@@ -828,7 +830,10 @@ private fun FileChip(
                 enabled = true,
                 onClick = clickAction,
                 onLongClick = {
-                    if (!selectionMode) onBeginSelection(entry.path)
+                    if (shouldEmitLongPressHaptic(selectionMode)) {
+                        view.performWatchHaptic(HapticCue.LongPress)
+                        onBeginSelection(entry.path)
+                    }
                 },
             )
             .padding(horizontal = 18.dp, vertical = 12.dp),
