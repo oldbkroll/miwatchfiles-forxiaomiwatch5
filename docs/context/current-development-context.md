@@ -8,10 +8,11 @@ Runner 会在 COPY/MOVE/DELETE 真正执行前发布 `WaitingForLargeOperationCo
 Local Binder、重连状态桥接和低重要性通知生命周期保持不变；文本覆盖和另存为仍由 `SafeTextWriteRepository` 负责。
 
 本地基线：Debug 单元测试、`assembleDebug`、`lintDebug` 和 `git diff --check` 均成功；解析结果为
-`172 tests / 0 failures / 0 errors / 4 skipped`。Lint 仍只保留两条 `TextTransactionJournal.kt`
+`173 tests / 0 failures / 0 errors / 4 skipped`。Lint 仍只保留两条 `TextTransactionJournal.kt`
 第 22、33 行的既有 `ApplySharedPref` warning，0 errors。当前最终 Debug APK 为 `0.3.1-dev-debug`、
 versionCode 6、targetSdk 29，SHA-256 为
-`5743D82C60B8C1021B9C93208817B49E755135C82D6D365CA4A87529286E83FE`。
+`03AF5DBCFDE3F3B89555210D9FC6661DCEBFDADBDB7BFE2BE7718E29C87FC6C1`，构建产物时间为
+`2026-07-24 10:44:14 +08:00`。
 
 真实 Watch 5 的既有 M3 证据已覆盖：普通 COPY/MOVE/DELETE、冲突取消、替换全部和运行中 COPY 取消，均限制在
 M1Sandbox。2026-07-24 重新发现在线 ADB 时，仅看到 `192.168.31.60:38935`，属性为 `model=M2505W1`、

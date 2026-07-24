@@ -14,9 +14,9 @@ DELETE 经 `FileOperationCoordinator`、Local Binder 和前台 `FileOperationSer
 2026-07-24 的本地 gate 证据：
 
 - `:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:lintDebug`、`git diff --check` 全部成功。
-- XML 汇总：`172 tests / 0 failures / 0 errors / 4 skipped`。
+- XML 汇总：`173 tests / 0 failures / 0 errors / 4 skipped`。
 - Lint：`0 errors / 2 warnings`，且仅为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref` warning。
-- 当前 Debug APK SHA-256：`5743D82C60B8C1021B9C93208817B49E755135C82D6D365CA4A87529286E83FE`。
+- 当前 Debug APK SHA-256：`03AF5DBCFDE3F3B89555210D9FC6661DCEBFDADBDB7BFE2BE7718E29C87FC6C1`。
 
 大任务提醒语义必须按当前实现和测试记录：
 

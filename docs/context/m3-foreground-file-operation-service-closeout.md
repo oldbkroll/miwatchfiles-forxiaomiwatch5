@@ -8,7 +8,7 @@
 
 | 项目 | 命令/产物 | 实际结果 |
 |---|---|---|
-| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；当前 XML 报告汇总 172 tests、0 failures、0 errors、4 skipped。 |
+| Debug 单元测试 | `.\\gradlew.bat :app:testDebugUnitTest --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；当前 XML 报告汇总 173 tests、0 failures、0 errors、4 skipped。 |
 | Debug APK 构建 | `.\\gradlew.bat :app:assembleDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；38 actionable tasks，38 `up-to-date`。 |
 | Debug Lint | `.\\gradlew.bat :app:lintDebug --no-daemon --console=plain` | exit 0，`BUILD SUCCESSFUL`；0 errors，2 warnings（均为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref` warning）。 |
 | 空白差异检查 | `git diff --check` | exit 0，无输出。 |
@@ -28,8 +28,8 @@
 
 - 路径：`app/build/outputs/apk/debug/app-debug.apk`
 - 文件大小：21,220,040 bytes
-- 构建产物时间（APK `LastWriteTime`）：2026-07-24 09:47:53 +08:00
-- SHA-256（当前最终 Debug APK）：`5743D82C60B8C1021B9C93208817B49E755135C82D6D365CA4A87529286E83FE`
+- 构建产物时间（APK `LastWriteTime`）：2026-07-24 10:44:14 +08:00
+- SHA-256（当前最终 Debug APK）：`03AF5DBCFDE3F3B89555210D9FC6661DCEBFDADBDB7BFE2BE7718E29C87FC6C1`
 
 ## 架构与明确边界
 
