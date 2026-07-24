@@ -16,7 +16,7 @@ android {
         // but its standard Android 11+ all-files settings activity is broken.
         targetSdk = 29
         versionCode = 6
-        versionName = "0.3.1-dev"
+        versionName = "0.3.1"
 
         ndk {
             // The target watch exposes only the 32-bit ARM ABI.

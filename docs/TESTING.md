@@ -16,8 +16,24 @@ DELETE 经 `FileOperationCoordinator`、Local Binder 和前台 `FileOperationSer
 - `:app:testDebugUnitTest`、`:app:assembleDebug`、`:app:lintDebug`、`git diff --check` 全部成功。
 - XML 汇总：`178 tests / 0 failures / 0 errors / 4 skipped`。
 - Lint：`0 errors / 2 warnings`，且仅为 `TextTransactionJournal.kt` 第 22、33 行的既有 `ApplySharedPref` warning。
-- 当前 Debug APK 构建产物时间：`2026-07-24 12:09:36 +08:00`。
-- 当前 Debug APK SHA-256：`00BE0ED679BA9886EAD42DC0DB26F590E80CCDD830F3ED3A08B400CA64B8D8EB`。
+- 当前 Debug APK 构建产物时间：`2026-07-24 12:32:18 +08:00`。
+- 当前 Debug APK 大小：`21,224,202 bytes`。
+- 当前 Debug APK SHA-256：`A819128CFD68AAC8E76ED55A897C2A957D3D93E7AD990A79DFFE9D36105C69CF`。
+
+2026-07-24 已完成正式 Release 交接：版本 `0.3.1` / versionCode `6`，使用本机 `askey1` 的 `key0` 签名；
+keystore 未纳入 Git。Release 构建与 APK 签名验证结果见
+`docs/superpowers/checkpoints/2026-07-24-release-handoff.md`。
+
+## M3 启动、内存和目录加载性能收尾
+
+2026-07-24 使用动态发现的 `adb-d87a2e34-S40wiQ._adb-tls-connect._tcp`（`M2505W1` / `grasslte`，Android 14 / API 34）安装当前 Debug APK，执行只读回归。冷启动 5 次为
+`3617/3580/3593/3595/3596 ms`，中位数 `3595 ms`；热启动因厂商系统返回 `LaunchState=UNKNOWN (0)`，只保留 `WaitTime=45–125 ms`，不作为可靠 `TotalTime`。
+
+本次主页、内部存储、Download、WatchFilesTest、M1Sandbox、文件详情、UTF-8 文本查看、长按选择、返回取消和
+4000×3000 图片低内存预览均通过。图片预览 5 轮 PSS 为 `73095/73179/74671/74699/74735 KiB`，首尾增加约 `1.6 MiB`；退出到详情为 `72699 KiB`，清空日志后的最终导航回到主页为 `57696 KiB`。
+
+清空日志后按应用 PID 审计没有 `AndroidRuntime`、`FATAL EXCEPTION`、`OutOfMemoryError`、`Exception` 或 `Error` 匹配；M1Sandbox 顶层清单未变化。本次没有新增设备文件写入，也没有为凑阈值创建压力夹具。详细表格见
+`docs/superpowers/checkpoints/2026-07-24-m3-performance-closeout.md`。
 
 2026-07-24 表冠与触觉兼容增量的本地证据：
 
