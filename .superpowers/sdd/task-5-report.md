@@ -68,7 +68,7 @@ These are now reflected as historical completed evidence rather than left as sta
 ### `docs/context/current-development-context.md`
 
 - Updated the date to 2026-07-24.
-- Recorded that HEAD `297672b` has the large-operation warning implementation and local verification complete.
+- Recorded that implementation commit `c9b2c66` and evidence-sync commit `eec5cfc` contain the reviewed M3 warning implementation and current local verification evidence.
 - Replaced the stale APK hash and test totals with the current Task 5A evidence.
 - Distinguished historical real-watch evidence from the current-build `PENDING_DEVICE_UI` state.
 
